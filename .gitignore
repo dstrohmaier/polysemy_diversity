@@ -1,0 +1,15 @@
+**/auto
+**/.mypy_cache
+**/__pycache__
+**/flycheck_*.py
+**/.ipynb_checkpoints
+**/.virtual_documents
+*.py~
+*.log
+*.aux
+*.bbl
+*.blg
+*.out
+*.pkl
+source_data/
+.vscode/
