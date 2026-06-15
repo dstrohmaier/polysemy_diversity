@@ -4,7 +4,7 @@ from pathlib import Path
 import click
 import numpy as np
 import torch
-from datasets import Dataset
+from datasets import Dataset  # type: ignore
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
 
 

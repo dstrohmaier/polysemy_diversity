@@ -15,7 +15,7 @@ from transformers import (
 )
 import evaluate  # type: ignore
 
-from data_processing.loading import get_wic_dsd, get_tempowic_dsd
+from data_processing.loading_wic import get_wic_dsd, get_tempowic_dsd
 
 
 def preprocess_wic(examples, tokenizer):
