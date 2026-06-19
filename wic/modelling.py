@@ -2,9 +2,6 @@ import json
 from typing import Any
 from pathlib import Path
 
-import click
-
-import torch
 import numpy as np
 import random
 from transformers import (
@@ -16,32 +13,19 @@ from transformers import (
 import evaluate  # type: ignore
 
 from data_processing.loading_wic import get_wic_dsd, get_tempowic_dsd
+from utilities.reproducibility import make_reproducible
+from wic.preprocessing import preprocess_wic
 
 
-def preprocess_wic(examples, tokenizer):
-    # Format: "word: sentence1" and "sentence2"
-    # This guides the model's attention directly onto the target word's context
-    first_sentences = [
-        f"{w}: {s}" for w, s in zip(examples["lemma"], examples["sentence1"])
-    ]
-    second_sentences = examples["sentence2"]
-
-    # Tokenize the sentence pairs
-    tokenized = tokenizer(
-        first_sentences,
-        second_sentences,
-        truncation=True,
-        max_length=256,
-        padding=False,  # Dynamic padding will be handled by DataCollator
-    )
-
-    # Map the SuperGLUE labels (0 or 1) to the standard "labels" key expected by Trainer
+def preprocess_wic_with_labels(examples, tokenizer):
+    # Tokenize, then map the SuperGLUE labels (0 or 1) to the standard "labels"
+    # key expected by Trainer.
+    tokenized = preprocess_wic(examples, tokenizer)
     tokenized["labels"] = examples["label"]
     return tokenized
 
 
 METRIC_F1 = evaluate.load("f1")
-METRIC_F1_MACRO = evaluate.load("f1")
 METRIC_ACCURACY = evaluate.load("accuracy")
 
 # Search space for randomised hyperparameter search
@@ -57,7 +41,7 @@ def compute_metrics(eval_pred):
     preds = np.argmax(predictions, axis=1)
     return {
         **METRIC_F1.compute(predictions=preds, references=labels, average="binary"),
-        "f1_macro": METRIC_F1_MACRO.compute(
+        "f1_macro": METRIC_F1.compute(
             predictions=preds, references=labels, average="macro"
         )["f1"],
         **METRIC_ACCURACY.compute(predictions=preds, references=labels),
@@ -65,7 +49,12 @@ def compute_metrics(eval_pred):
 
 
 def train_model(
-    model, tokenized_datasets, tokenizer, output_dir: Path, hparams: dict[str, Any], save: bool = True
+    model,
+    tokenized_datasets,
+    tokenizer,
+    output_dir: Path,
+    hparams: dict[str, Any],
+    save: bool = True,
 ):
     training_args = TrainingArguments(
         output_dir=str(output_dir),
@@ -97,7 +86,10 @@ def train_model(
     last_eval = next(
         (e for e in reversed(trainer.state.log_history) if "eval_f1" in e), None
     )
-    return last_eval["eval_f1"] if last_eval else None
+    assert (
+        last_eval is not None
+    ), "training produced no eval_f1. Check eval_strategy/epochs"
+    return last_eval["eval_f1"]
 
 
 def sample_hparams(rng: random.Random) -> dict:
@@ -116,20 +108,27 @@ def hyperparameter_search(
     best_f1 = -1.0
     best_hparams = {}
     results = []
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     for trial in range(n_trials):
         hparams = sample_hparams(rng)
         trial_dir = output_dir / f"trial_{trial}"
+        trial_dir.mkdir(parents=True, exist_ok=True)
         print(f"\n[HPSearch] Trial {trial + 1}/{n_trials}: {hparams}")
+        with open(trial_dir / "hparams.json", "w") as out_f:
+            json.dump(hparams, out_f)
 
         model = AutoModelForSequenceClassification.from_pretrained(
             model_name, num_labels=2
         )
-        f1 = train_model(model, tokenized_datasets, tokenizer, trial_dir, hparams, save=False)
+        f1 = train_model(
+            model, tokenized_datasets, tokenizer, trial_dir, hparams, save=False
+        )
         results.append({"trial": trial, "hparams": hparams, "f1": f1})
-        print(f"[HPSearch] Trial {trial + 1} F1: {f1:.4f}")
 
-        if f1 is not None and f1 > best_f1:
+
+        print(f"[HPSearch] Trial {trial + 1} F1: {f1:.4f}")
+        if f1 > best_f1:
             best_f1 = f1
             best_hparams = hparams
 
@@ -177,8 +176,14 @@ def train_final_model(
 def evaluate_final_model(output_dir: Path, tokenized_test_dataset, tokenizer):
     """Evaluate the saved final model on the test split and write test_results.json."""
     model = AutoModelForSequenceClassification.from_pretrained(output_dir / "final")
+    eval_args = TrainingArguments(
+        output_dir=str(output_dir),
+        per_device_eval_batch_size=32,
+        fp16=True,
+    )
     trainer = Trainer(
         model=model,
+        args=eval_args,
         processing_class=tokenizer,
         compute_metrics=compute_metrics,
     )
@@ -190,47 +195,22 @@ def evaluate_final_model(output_dir: Path, tokenized_test_dataset, tokenizer):
 
 def tokenize(dsd, tokenizer):
     return dsd.map(
-        lambda x: preprocess_wic(x, tokenizer),
+        lambda x: preprocess_wic_with_labels(x, tokenizer),
         batched=True,
         remove_columns=dsd["train"].column_names,
     )
 
 
-@click.command()
-@click.argument("model_name", type=str)
-@click.argument("source_dir", type=Path)
-@click.argument("output_dir", type=Path)
-@click.option(
-    "--dataset",
-    type=click.Choice(["wic", "tempowic", "wic+tempowic"]),
-    default="wic",
-    show_default=True,
-)
-@click.option(
-    "--n-trials",
-    type=click.IntRange(min=2),
-    default=30,
-    show_default=True,
-    help="Number of random hyperparameter trials.",
-)
-@click.option(
-    "--seed",
-    type=int,
-    default=42,
-    show_default=True,
-    help="Random seed for hyperparameter sampling.",
-)
-def run_training(
+def run_pipeline(
     model_name: str,
     source_dir: Path,
     output_dir: Path,
     dataset: str,
     n_trials: int,
     seed: int,
-):
-    if not torch.cuda.is_available():
-        raise SystemExit("No CUDA-capable GPU found. Aborting.")
+) -> None:
 
+    make_reproducible(seed, deterministic=False)
     rng = random.Random(seed)
 
     base_output = output_dir / model_name.replace("/", "--")
@@ -243,14 +223,19 @@ def run_training(
             wic_search_data = tokenize(get_wic_dsd(wic_dir), tokenizer)
             wic_final_data = tokenize(get_wic_dsd(wic_dir, use_test=True), tokenizer)
             best_hparams = hyperparameter_search(
-                model_name, wic_search_data, tokenizer, base_output / dataset, n_trials, rng
+                model_name,
+                wic_search_data,
+                tokenizer,
+                base_output / dataset / "hp_search",
+                n_trials,
+                rng,
             )
             print("[Final] Retraining WiC on train+dev with best hparams")
             train_final_model(
                 model_name,
                 wic_final_data,
                 tokenizer,
-                base_output / dataset,
+                base_output / dataset / "hp_search",
                 best_hparams,
             )
             evaluate_final_model(
@@ -266,7 +251,7 @@ def run_training(
                 model_name,
                 tempowic_search_data,
                 tokenizer,
-                base_output / dataset,
+                base_output / dataset / "hp_search",
                 n_trials,
                 rng,
             )
@@ -275,7 +260,7 @@ def run_training(
                 model_name,
                 tempowic_final_data,
                 tokenizer,
-                base_output / dataset,
+                base_output / dataset / "hp_search",
                 best_hparams,
             )
             evaluate_final_model(
@@ -283,8 +268,8 @@ def run_training(
             )
 
         case "wic+tempowic":
-            wic_output = base_output / "wic"
-            tempowic_output = base_output / "wic+tempowic"
+            wic_output = base_output / "wic+tempowic" / "wic"
+            tempowic_output = base_output / "wic+tempowic" / "tempowic"
             wic_search_data = tokenize(get_wic_dsd(wic_dir), tokenizer)
             wic_final_data = tokenize(get_wic_dsd(wic_dir, use_test=True), tokenizer)
             tempowic_search_data = tokenize(get_tempowic_dsd(tempowic_dir), tokenizer)
@@ -324,7 +309,3 @@ def run_training(
             evaluate_final_model(
                 tempowic_output, tempowic_final_data["validation"], tokenizer
             )
-
-
-if __name__ == "__main__":
-    run_training()
