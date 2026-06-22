@@ -49,7 +49,7 @@ def simulate_polysemy(
     lemma: str,
     pos: str,
     sense_probs: dict[str, float],
-    n_draws: int = 200,
+    n_draws: int = 2000,
     rng: np.random.Generator | None = None,
 ) -> pd.DataFrame:
     """
