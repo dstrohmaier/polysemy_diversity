@@ -48,7 +48,10 @@ train-wic-tempowic model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0
 predict_efcamdat model="answerdotai/ModernBERT-large" train_dataset="wic" $CUDA_VISIBLE_DEVICES="0":
     #!/usr/bin/env bash
     export LD_LIBRARY_PATH="../diversity_env/lib:$LD_LIBRARY_PATH"
-    python apply_wic.py "output/models/{{ model }}/{{ train_dataset }}/final" source_data/efcamdat output/efcamdat/{{ train_dataset }}
+    # Training stores the model name slash-replaced (model_name.replace("/", "--")).
+    model_path="{{ model }}"
+    model_path="${model_path//\//--}"
+    python apply_wic.py "output/models/${model_path}/{{ train_dataset }}/final" source_data/efcamdat output/efcamdat/{{ train_dataset }}
 
 # --- Scoring
 
