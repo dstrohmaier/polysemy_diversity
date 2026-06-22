@@ -4,22 +4,31 @@ create_env:
     conda run -p ../diversity_env pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129
     conda run -p ../diversity_env pip install numpy pandas scipy scikit-learn seaborn datasets transformers tqdm evaluate accelerate nltk
 
+# ---- Vocab Creation
+
 create-vocab vocab="most_diverse" n="100":
     #!/usr/bin/env bash
     python create_vocabs.py source_data/vocabs {{ vocab }} -n {{ n }}
 
-predict_efcamdat model="answerdotai/ModernBERT-large" train_dataset="wic" $CUDA_VISIBLE_DEVICES="0":
+# --- Simulation
+
+simulate-target-verbs:
     #!/usr/bin/env bash
     export LD_LIBRARY_PATH="../diversity_env/lib:$LD_LIBRARY_PATH"
-    python apply_wic.py "output/models/{{ model }}/{{ train_dataset }}/final" source_data/efcamdat output/efcamdat/{{ train_dataset }}
+    python simulate_data.py source_data/word_sense_disambigation_corpora source_data/vocabs/target_verbs.json source_data/simulated_data/target_verbs
 
-push2flamingo:
-    rsync -rtvu --progress --exclude-from=../../ignorelist.txt ./ ds858@flamingo.cl.cam.ac.uk:/local/scratch/ds858/wic_shift
-
-score-wic sim_dir output_dir model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
+simulate-most-diverse pos:
     #!/usr/bin/env bash
     export LD_LIBRARY_PATH="../diversity_env/lib:$LD_LIBRARY_PATH"
-    python score_data.py wic {{ sim_dir }} {{ output_dir }} --base-model "{{ model }}"
+    python simulate_data.py source_data/word_sense_disambigation_corpora source_data/vocabs/most_diverse_{{ pos }}.json source_data/simulated_data/most_diverse_{{ pos }}
+
+simulate-most-diverse-all:
+    #!/usr/bin/env bash
+    for pos in noun verb adj adv; do
+        just simulate-most-diverse "$pos"
+    done
+
+# --- Training WiC
 
 train model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
     #!/usr/bin/env bash
@@ -35,3 +44,25 @@ train-wic-tempowic model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0
     #!/usr/bin/env bash
     export LD_LIBRARY_PATH="../diversity_env/lib:$LD_LIBRARY_PATH"
     python create_wic_model.py "{{ model }}" source_data output/models --dataset wic+tempowic
+
+predict_efcamdat model="answerdotai/ModernBERT-large" train_dataset="wic" $CUDA_VISIBLE_DEVICES="0":
+    #!/usr/bin/env bash
+    export LD_LIBRARY_PATH="../diversity_env/lib:$LD_LIBRARY_PATH"
+    python apply_wic.py "output/models/{{ model }}/{{ train_dataset }}/final" source_data/efcamdat output/efcamdat/{{ train_dataset }}
+
+# --- Scoring
+
+score-wic sim_dir output_dir model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
+    #!/usr/bin/env bash
+    export LD_LIBRARY_PATH="../diversity_env/lib:$LD_LIBRARY_PATH"
+    python score_data.py wic {{ sim_dir }} {{ output_dir }} --base-model "{{ model }}"
+
+score-vmf sim_dir output_dir model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
+    #!/usr/bin/env bash
+    export LD_LIBRARY_PATH="../diversity_env/lib:$LD_LIBRARY_PATH"
+    python score_data.py vmf {{ sim_dir }} {{ output_dir }} --hf-model-name "{{ model }}"
+
+# --- Data Transfer
+
+push2flamingo:
+    rsync -rtvu --progress --exclude-from=../../ignorelist.txt ./ ds858@flamingo.cl.cam.ac.uk:/local/scratch/ds858/wic_shift

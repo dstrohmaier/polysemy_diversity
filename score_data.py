@@ -29,7 +29,7 @@ from wic.wic_estimation import get_corpora_wic_score
 @click.option(
     "--hf-model-name",
     type=str,
-    default="answerdotai/ModernBERT-base",
+    default="answerdotai/ModernBERT-large",
     show_default=True,
     help="[vmf] Hugging Face model used to extract contextual embeddings.",
 )
