@@ -1,3 +1,25 @@
+"""Estimate von Mises-Fisher concentration for simulated word-sense corpora.
+
+The von Mises-Fisher (vMF) distribution is the analogue of a Gaussian for points
+that live on the surface of a unit hypersphere -- i.e. for directions rather than
+positions. It is parameterised by a mean direction ``mu`` (a unit vector pointing
+to the centre of the cloud) and a concentration ``kappa >= 0``. Large ``kappa``
+means the directions are tightly clustered around ``mu``; ``kappa = 0`` means they
+are spread uniformly over the sphere.
+
+We treat each word occurrence's contextual embedding as a direction (only its
+orientation matters, not its magnitude) and fit a single vMF per corpus. The
+resulting ``kappa`` is our scalar measure of sense spread: a polysemous or
+sense-diverse word produces context vectors pointing in many directions and
+therefore a low ``kappa``, whereas a word used in one consistent sense yields a
+high ``kappa``. ``kappa`` is recovered from the resultant length ``r`` (the norm
+of the mean vector) via the standard approximation in ``_estimate_kappa``.
+
+This module walks the simulated corpora produced by ``simulate_zipfian_corpora``
+(one corpus per (lemma, pos) x (k_senses, offset) variant), fits one ``kappa`` per
+corpus, and writes the collected scores to a single ``vmf_scores.csv``.
+"""
+
 import json
 from pathlib import Path
 
