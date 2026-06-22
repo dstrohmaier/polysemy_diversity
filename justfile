@@ -1,8 +1,12 @@
 create_env:
     #!/usr/bin/env bash
-    conda create -p ../diversity_env numpy pandas scipy scikit-learn seaborn just libstdcxx-ng -c conda-forge
+    conda create -p ../diversity_env just libstdcxx-ng -c conda-forge
     conda run -p ../diversity_env pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129
-    conda run -p ../diversity_env pip install stanza datasets transformers tqdm evaluate accelerate
+    conda run -p ../diversity_env pip install numpy pandas scipy scikit-learn seaborn datasets transformers tqdm evaluate accelerate nltk
+
+create-vocab vocab="most_diverse" n="100":
+    #!/usr/bin/env bash
+    python create_vocabs.py source_data/vocabs {{ vocab }} -n {{ n }}
 
 predict_efcamdat model="answerdotai/ModernBERT-large" train_dataset="wic" $CUDA_VISIBLE_DEVICES="0":
     #!/usr/bin/env bash
