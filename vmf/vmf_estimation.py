@@ -87,7 +87,7 @@ def score_corpus(df: pd.DataFrame, extractor: WordVectorExtractor, meta: dict):
 def get_corpora_vmf(
     sim_dir: Path,
     output_dir: Path,
-    hf_model_name: str = "answerdotai/ModernBERT-base",
+    hf_model_name: str = "answerdotai/ModernBERT-large",
 ) -> pd.DataFrame:
     """Compute a vMF kappa for every simulated corpus under ``sim_dir``.
 
