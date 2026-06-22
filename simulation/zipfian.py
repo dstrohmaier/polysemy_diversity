@@ -23,9 +23,8 @@ import pandas as pd  # type: ignore
 def zipfian_probs_for_senses(senses: list[str], slope: float) -> dict[str, float]:
     """Zipfian probabilities over an explicit, frequency-ranked list of senses.
 
-    ``senses[0]`` is treated as rank 1 (highest probability). Unlike
-    ``corpus_simulation.zipfian_sense_probs`` this takes the sense list directly,
-    so it works on a truncated top-k subset of a verb's inventory.
+    ``senses[0]`` is treated as rank 1 (highest probability). Takes the sense
+    list directly, so it works on a truncated top-k subset of a verb's inventory.
     """
     weights = np.array([(i + 1) ** (-slope) for i in range(len(senses))])
     weights /= weights.sum()

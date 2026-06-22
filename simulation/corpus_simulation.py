@@ -4,44 +4,16 @@ import hashlib
 import json
 import shutil
 import warnings
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
+from itertools import product
+from datetime import datetime
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd  # type: ignore
+from scipy.stats import entropy  # type: ignore
 
 from simulation.zipfian import estimate_slopes_for_words, zipfian_probs_for_senses
-
-
-def uniform_sense_probs(wsd_df: pd.DataFrame, lemma: str, pos: str) -> dict[str, float]:
-    """Return a uniform probability distribution over all senses of (lemma, pos)."""
-    senses = (
-        wsd_df.loc[(wsd_df["lemma"] == lemma) & (wsd_df["pos"] == pos), "sense"]
-        .unique()
-        .tolist()
-    )
-    if not senses:
-        raise ValueError(f"No examples found for lemma={lemma!r}, pos={pos!r}")
-    p = 1.0 / len(senses)
-    return {s: p for s in senses}
-
-
-def zipfian_sense_probs(
-    wsd_df: pd.DataFrame, lemma: str, pos: str, slope: float
-) -> dict[str, float]:
-    """Return a Zipfian probability distribution over all senses of (lemma, pos).
-
-    Senses are ranked by descending corpus frequency; rank 1 gets the highest probability.
-    """
-    subset = wsd_df[(wsd_df["lemma"] == lemma) & (wsd_df["pos"] == pos)]
-    if subset.empty:
-        raise ValueError(f"No examples found for lemma={lemma!r}, pos={pos!r}")
-
-    senses = subset["sense"].value_counts().index.tolist()
-
-    Z = sum((i + 1) ** (-slope) for i in range(len(senses)))
-    return {s: (i + 1) ** (-slope) / Z for i, s in enumerate(senses)}
 
 
 def simulate_polysemy(
@@ -127,6 +99,73 @@ class SimConfig:
     seed: int
 
 
+def _word_id(lemma: str, pos: str) -> int:
+    """Deterministic per-(lemma, pos) id for collision-free RNG seeding.
+
+    Unlike built-in hash() (salted per run), this is stable across runs. Keyed
+    on both fields so the same lemma under different POS gets independent streams.
+    """
+    return int(hashlib.sha256(f"{lemma}\t{pos}".encode()).hexdigest(), 16) % (2**32)
+
+
+def _prepare_word_dir(output_dir: Path, lemma: str, pos: str) -> Path:
+    """Return a clean output dir for (lemma, pos), archiving any prior run.
+
+    Files from a previous run (e.g. with a different k/offset grid) must not
+    linger alongside this run's output. Rather than deleting, archive existing
+    output under stale/<run_stamp>/.
+    """
+    word_dir = output_dir / f"{lemma}_{pos}"
+    if word_dir.exists():
+        run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive = output_dir / "stale" / run_stamp / f"{lemma}_{pos}"
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(word_dir), str(archive))
+    word_dir.mkdir(parents=True, exist_ok=True)
+    return word_dir
+
+
+def _draw_corpus_with_all_senses(
+    sub_df: pd.DataFrame,
+    lemma: str,
+    pos: str,
+    sense_probs: dict[str, float],
+    k: int,
+    n_draws: int,
+    rng: np.random.Generator,
+) -> pd.DataFrame:
+    """Draw a corpus, retrying until all k senses are realised.
+
+    A finite multinomial draw can miss a rare sense, leaving fewer than k senses
+    realised. Reject and redraw until all k appear so every corpus has *exactly*
+    k senses per word.
+
+    Raises
+    ------
+    RuntimeError
+        If all k senses cannot be realised within MAX_DRAW_ATTEMPTS.
+    """
+    for _ in range(MAX_DRAW_ATTEMPTS):
+        candidate = simulate_polysemy(
+            sub_df, lemma, pos, sense_probs, n_draws=n_draws, rng=rng
+        )
+        if candidate["sense"].nunique() == k:
+            return candidate
+    raise RuntimeError(
+        f"{lemma!r} ({pos}): could not realise all {k} senses in {n_draws} "
+        f"draws after {MAX_DRAW_ATTEMPTS} attempts."
+    )
+
+
+def _write_variant(
+    word_dir: Path, variant: str, corpus: pd.DataFrame, meta: dict
+) -> None:
+    """Write the corpus CSV and its sidecar meta JSON for one variant."""
+    corpus.to_csv(word_dir / f"{variant}.csv", index=False)
+    with open(word_dir / f"{variant}.meta.json", "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+
+
 def simulate_word_corpus(
     sub_df: pd.DataFrame,
     baseline: float,
@@ -137,57 +176,35 @@ def simulate_word_corpus(
     pos = sub_df["pos"].iloc[0]
     senses = sub_df["sense"].value_counts().index.tolist()
 
-    # Deterministic per-(lemma, pos) id (unlike built-in hash(), which is salted
-    # per run). Keyed on both fields so the same lemma under different POS gets
-    # independent streams.
-    word_id = int(hashlib.sha256(f"{lemma}\t{pos}".encode()).hexdigest(), 16) % (2**32)
+    word_id = _word_id(lemma, pos)
+    word_dir = _prepare_word_dir(output_dir, lemma, pos)
 
-    # Start from a clean directory so files from a previous run (e.g. with a
-    # different k/offset grid) cannot linger alongside this run's output. Rather
-    # than deleting, archive any existing output under stale/<run_stamp>/.
-    word_dir = output_dir / f"{lemma}_{pos}"
-    if word_dir.exists():
-        run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        archive = output_dir / "stale" / run_stamp / f"{lemma}_{pos}"
-        archive.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(word_dir), str(archive))
-    word_dir.mkdir(parents=True, exist_ok=True)
+    # Map each offset to its grid index so the RNG seed is a clean integer,
+    # independent of the float grid's resolution (int(offset * 100) could
+    # truncate-collide when offsets carry sub-0.01 precision).
+    offset_index = {offset: j for j, offset in enumerate(config.offsets)}
 
-    for k in config.k_senses:
-        for i, offset in enumerate(config.offsets):
-            if len(senses) < k:
-                continue
+    for k, offset in product(config.k_senses, config.offsets):
+        if len(senses) < k:
+            continue
+        top_k = senses[:k]
 
-            top_k = senses[:k]
-            applied = max(baseline + offset, SLOPE_FLOOR)
+        applied = max(baseline + offset, SLOPE_FLOOR)
+        sense_probs = zipfian_probs_for_senses(top_k, applied)
 
-            sense_probs = zipfian_probs_for_senses(top_k, applied)
-            # A finite multinomial draw can miss a rare sense, leaving fewer
-            # than k senses realised. Reject and redraw until all k appear so
-            # every corpus has *exactly* k senses per word.
-            corpus = None
-            # List seed -> SeedSequence: independent, collision-free streams per
-            # (word, k, offset), fully determined by config.seed.
-            rng = np.random.default_rng([config.seed, word_id, k, i])
-            for _ in range(MAX_DRAW_ATTEMPTS):
-                candidate = simulate_polysemy(
-                    sub_df, lemma, pos, sense_probs, n_draws=config.n_draws, rng=rng
-                )
-                if candidate["sense"].nunique() == k:
-                    corpus = candidate
-                    break
-            if corpus is None:
-                warnings.warn(
-                    f"{lemma!r}: could not realise all {k} senses in "
-                    f"{config.n_draws} draws at slope {applied:.3f} after "
-                    f"{MAX_DRAW_ATTEMPTS} attempts; word omitted for "
-                    f"k={k}, offset={offset}."
-                )
-                continue
+        # List seed -> SeedSequence: independent, collision-free streams per
+        # (word, k, offset), fully determined by config.seed.
+        rng = np.random.default_rng([config.seed, word_id, k, offset_index[offset]])
+        corpus = _draw_corpus_with_all_senses(
+            sub_df, lemma, pos, sense_probs, k, config.n_draws, rng
+        )
 
-            variant = f"k{k}_offset_{'m' if offset < 0 else 'p'}{abs(offset):.2f}"
-            corpus.to_csv(word_dir / f"{variant}.csv", index=False)
-            variant_meta = {
+        variant = f"k{k}_offset_{'m' if offset < 0 else 'p'}{abs(offset):.2f}"
+        _write_variant(
+            word_dir,
+            variant,
+            corpus,
+            {
                 "lemma": lemma,
                 "pos": pos,
                 "baseline_slope": baseline,
@@ -195,10 +212,10 @@ def simulate_word_corpus(
                 "clamped": applied != baseline + offset,
                 "k_senses": k,
                 "n_senses_available": len(senses),
-            }
-            meta_path = word_dir / f"{variant}.meta.json"
-            with open(meta_path, "w", encoding="utf-8") as f:
-                json.dump(variant_meta, f, indent=2)
+                "sense_probs": sense_probs,
+                "entropy_bits": float(entropy(list(sense_probs.values()), base=2)),
+            },
+        )
 
 
 def simulate_zipfian_corpora(
