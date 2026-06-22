@@ -1,3 +1,6 @@
+unit-test:
+    python -m unittest discover -s './tests' -p '*_tests.py'
+
 create-env:
     #!/usr/bin/env bash
     conda create -p ../diversity_env just libstdcxx-ng -c conda-forge
