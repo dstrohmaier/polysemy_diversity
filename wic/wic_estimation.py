@@ -147,7 +147,7 @@ def get_corpora_wic_score(
             continue  # skip stray CSVs without sidecar metadata
         if not data_path.exists():
             warnings.warn(
-                f"  {csv_path.parent.name} {stem}: missing .data (run conversion); skipped"
+                f"{csv_path.parent.name} {stem}: missing .data (run conversion); skipped"
             )
             continue
 

@@ -61,7 +61,7 @@ def score(
         case "vmf":
             get_corpora_vmf(sim_dir, output_dir / "vmf", hf_model_name=hf_model_name)
         case "wic":
-             if not torch.cuda.is_available():
+            if not torch.cuda.is_available():
                 raise SystemExit("No CUDA-capable GPU found. Aborting.")
             get_corpora_wic_score(
                 sim_dir,
