@@ -1,8 +1,8 @@
-create_env:
+create-env:
     #!/usr/bin/env bash
     conda create -p ../diversity_env just libstdcxx-ng -c conda-forge
     conda run -p ../diversity_env pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129
-    conda run -p ../diversity_env pip install numpy pandas scipy scikit-learn seaborn datasets transformers tqdm evaluate accelerate nltk
+    conda run -p ../diversity_env pip install jax[cuda13] numpy pandas scipy scikit-learn seaborn datasets transformers tqdm evaluate accelerate nltk
 
 # ---- Vocab Creation
 
@@ -57,10 +57,24 @@ score-wic sim_dir output_dir model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_
     export LD_LIBRARY_PATH="../diversity_env/lib:$LD_LIBRARY_PATH"
     python score_data.py wic {{ sim_dir }} {{ output_dir }} --base-model "{{ model }}"
 
+score-wic-all:
+    #!/usr/bin/env bash
+    for sim_dir in source_data/simulated_data/*/; do
+        name=$(basename "$sim_dir")
+        just score-wic "$sim_dir" "output/scores/$name"
+    done
+
 score-vmf sim_dir output_dir model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
     #!/usr/bin/env bash
     export LD_LIBRARY_PATH="../diversity_env/lib:$LD_LIBRARY_PATH"
     python score_data.py vmf {{ sim_dir }} {{ output_dir }} --hf-model-name "{{ model }}"
+
+score-vmf-all:
+    #!/usr/bin/env bash
+    for sim_dir in source_data/simulated_data/*/; do
+        name=$(basename "$sim_dir")
+        just score-vmf "$sim_dir" "output/scores/$name"
+    done
 
 # --- Data Transfer
 

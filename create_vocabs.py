@@ -3,7 +3,7 @@ from pathlib import Path
 
 import click
 
-from nltk.corpus import wordnet as wn
+from nltk.corpus import wordnet as wn  # type: ignore
 
 # WordNet part-of-speech tags mapped to the universal POS labels used in the
 # vocab files (e.g. source_data/vocabs/target_verbs.json).
