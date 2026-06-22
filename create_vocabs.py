@@ -15,31 +15,35 @@ WORDNET_POS_TO_UNIVERSAL = {
 }
 
 
-def count_senses() -> dict[tuple[str, str], int]:
-    """Count the number of WordNet synsets for every single-word lemma/POS pair."""
-    counts: dict[tuple[str, str], int] = {}
-    for wn_pos, universal_pos in WORDNET_POS_TO_UNIVERSAL.items():
-        for lemma in wn.all_lemma_names(pos=wn_pos):
-            # Skip multi-word expressions; we only want single words.
-            if "_" in lemma:
-                continue
-            counts[(lemma, universal_pos)] = len(wn.synsets(lemma, pos=wn_pos))
+def count_senses(wn_pos: str) -> dict[str, int]:
+    """Count the WordNet synsets of every single-word lemma with the given POS."""
+    counts: dict[str, int] = {}
+    for lemma in wn.all_lemma_names(pos=wn_pos):
+        # Skip multi-word expressions; we only want single words.
+        if "_" in lemma:
+            continue
+        counts[lemma] = len(wn.synsets(lemma, pos=wn_pos))
     return counts
 
 
 def create_most_diverse(vocab_dir: Path, n: int = 100) -> None:
-    """Write the n lemma/POS pairs with the most distinct WordNet senses."""
-    counts = count_senses()
-    # Sort by sense count (descending), breaking ties alphabetically for
-    # reproducible output.
-    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    pairs = [[lemma, pos] for (lemma, pos), _ in ranked[:n]]
+    """Write, for each content-word POS, the n lemmata with the most senses.
 
+    Produces one file per POS (e.g. ``most_diverse_verb.json``) so each
+    vocabulary contains the most sense-diverse lemmata of a single POS.
+    """
     vocab_dir.mkdir(parents=True, exist_ok=True)
-    out_path = vocab_dir / "most_diverse.json"
-    # Match the compact one-pair-per-line layout of the existing vocab files.
-    lines = ",\n".join(f"  {json.dumps(pair)}" for pair in pairs)
-    out_path.write_text(f"[\n{lines}\n]\n", encoding="utf-8")
+    for wn_pos, universal_pos in WORDNET_POS_TO_UNIVERSAL.items():
+        counts = count_senses(wn_pos)
+        # Sort by sense count (descending), breaking ties alphabetically for
+        # reproducible output.
+        ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        pairs = [[lemma, universal_pos] for lemma, _ in ranked[:n]]
+
+        out_path = vocab_dir / f"most_diverse_{universal_pos.lower()}.json"
+        # Match the compact one-pair-per-line layout of the existing vocab files.
+        lines = ",\n".join(f"  {json.dumps(pair)}" for pair in pairs)
+        out_path.write_text(f"[\n{lines}\n]\n", encoding="utf-8")
 
 
 @click.command()
