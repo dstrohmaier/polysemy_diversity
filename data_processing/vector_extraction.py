@@ -43,6 +43,8 @@ class WordVectorExtractor:
         Returns an array of shape (n_found, hidden_size); rows are produced only
         for contexts where the target word was found and aligned to a subword.
         """
+
+        self.model.eval()
         vectors = []
         for ctx in contexts:
             text = ctx["sentence"]
