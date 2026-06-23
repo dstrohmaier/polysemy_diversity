@@ -21,7 +21,7 @@ class WordVectorExtractor:
     """
 
     def __init__(self, model, tokenizer, nlp, device: str | torch.device = "cpu"):
-        self.model = model
+        self.model = model.to(device)
         self.tokenizer = tokenizer
         self.nlp = nlp
         self.device = device
