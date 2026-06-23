@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 
 import numpy as np
@@ -5,6 +6,8 @@ import torch
 
 import spacy
 from transformers import AutoModel, AutoTokenizer
+
+logger = logging.getLogger("div")
 
 
 @dataclass(frozen=True)
@@ -46,6 +49,8 @@ class WordVectorExtractor:
 
         self.model.eval()
         vectors = []
+        n_skipped_not_found = 0
+        n_skipped_unaligned = 0
         for ctx in contexts:
             text = ctx["sentence"]
             doc = self.nlp(text)
@@ -59,6 +64,7 @@ class WordVectorExtractor:
                 None,
             )
             if spacy_token is None:
+                n_skipped_not_found += 1
                 continue
 
             offset_start = spacy_token.idx
@@ -69,7 +75,7 @@ class WordVectorExtractor:
                 return_tensors="pt",
                 padding=True,
                 truncation=True,
-                max_length=512,
+                max_length=1024,
                 return_offsets_mapping=True,
             )
 
@@ -96,6 +102,7 @@ class WordVectorExtractor:
                 and not (token_end <= offset_start or token_start >= offset_end)
             ]
             if not word_token_indices:
+                n_skipped_unaligned += 1
                 continue
 
             word_vector = (
@@ -106,7 +113,23 @@ class WordVectorExtractor:
                 word_vector = word_vector / norm
             vectors.append(word_vector)
 
-        return np.array(vectors) if vectors else np.array([]).reshape(0, -1)
+        n_skipped = n_skipped_not_found + n_skipped_unaligned
+        if n_skipped:
+            logger.info(
+                "get_word_vectors(%r, %s): extracted %d/%d, skipped %d "
+                "(%d not found, %d unaligned to subwords)",
+                word,
+                target_pos,
+                len(vectors),
+                len(contexts),
+                n_skipped,
+                n_skipped_not_found,
+                n_skipped_unaligned,
+            )
+
+        if vectors:
+            return np.array(vectors)
+        return np.empty((0, self.model.config.hidden_size))
 
     @classmethod
     def from_config(cls, config: ExtractionConfig):
