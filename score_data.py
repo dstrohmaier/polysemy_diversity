@@ -18,6 +18,7 @@ from pathlib import Path
 import click
 import torch
 
+from utilities.logging_utils import start_logging
 from vmf.vmf_estimation import get_corpora_vmf
 from wic.wic_estimation import get_corpora_wic_score
 
@@ -56,6 +57,8 @@ def score(
     base_model: str,
 ) -> None:
     """Score every simulated corpus under SIM_DIR using SCORING (vmf or wic)."""
+
+    start_logging(output_dir / "logs", file_name=f"score_{scoring}.log")
 
     match scoring:
         case "vmf":
