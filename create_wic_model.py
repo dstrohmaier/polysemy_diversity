@@ -3,6 +3,7 @@ from pathlib import Path
 import click
 import torch
 
+from utilities.logging_utils import start_logging
 from wic.modelling import run_pipeline
 
 
@@ -40,6 +41,8 @@ def run_training(
 ):
     if not torch.cuda.is_available():
         raise SystemExit("No CUDA-capable GPU found. Aborting.")
+
+    start_logging(output_dir / "logs", file_name=f"train_{dataset}.log")
 
     run_pipeline(model_name, source_dir, output_dir, dataset, n_trials, seed)
 

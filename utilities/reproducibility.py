@@ -8,7 +8,7 @@ from transformers import set_seed
 
 def make_reproducible(seed: int, deterministic: bool = True) -> None:
     """Set seeds for various libraries."""
-    logger = logging.getLogger("clm")
+    logger = logging.getLogger("div")
     logger.info("Setting seed %s", seed)
 
     set_seed(seed)
