@@ -1,28 +1,34 @@
 # Estimating Diversity
 
-The goal of this repository is to estimate the diversity of usages per word in a given corpus.
-For this purpose, the repository contains the code required to compare two measures of polysemy of word occurrences in a text.
+The goal of this repository is to estimate the diversity of usages per word in a given corpus. For this purpose, the repository contains the code required to compare two measures of polysemy of word occurrences in a text.
 
 ## The Two Methods for Estimating Diversity
 
 The two methods are:
 
 1. vMF: We fit and use a von Mises-Fisher distribution to estimate diversity, specifically the kappa parameter.
-2. WiC-based: We are applying a transformer model trained on the word-in-context (WiC) task to distinguish whether words share a sense. We sample pairs of occurrences from the corpus and apply the WiC model to it. The number of pairs differing in sense should tell us how diverse the senses of a target word in a corpus are.
+2. WiC-based: We are applying a transformer model trained on the word-in-context (WiC) task to distinguish whether words share a sense. We sample pairs of occurrences from the corpus and apply the WiC model to it. The mean probability that a pair differs in sense should tell us how diverse the senses of a target word in a corpus are.
 
 ## Simulation Study
 
-To compare the two methods for estimating diversity, we use a simulation study with known ground-truth: We create artificial corpora where we know the correct senses by sampling from a WSD corpus. To make the corpus realistic, we start from a Zipfian distribution which we estimate from the WSD corpus and vary the number of senses as well as the distribution's slope parameter. Thus, we can compare the diversity estimates with known datasets.
+To compare the two methods for estimating diversity, we use a simulation study with known ground-truth: We create artificial corpora where we know the correct senses by sampling from a WSD corpus. To make the corpus realistic, we start from a Zipfian distribution and vary two parameters: 
+
+1. the slope of the Zipfian distribution, and 
+2. the support of the Zipfian distribution, i.e. the number of senses.
+
+We estimate the slope from the WSD corpus. 
+
+By using sense-annotated occurrences to create corpora, we can compare the diversity estimates for datasets with known properties.
 
 ### Vocabularies
 
-Our simulation study covers for each PoS the 100 lemma with most senses in WordNet. In addition, we have a list of 10 target verbs.
+Our simulation study covers for each PoS the 100 lemmata with most senses in WordNet. In addition, we have a list of 10 target verbs.
 
 ## Requirements
 
-In addition to the python libraries specified in the justfile, this project requires the [Google WSD corpus](https://research.google/blog/a-large-corpus-for-supervised-word-sense-disambiguation/).
+In addition to the libraries specified installed by the create-env recipe (conda + pip) in the justfile, this project requires the [Google WSD corpus](https://research.google/blog/a-large-corpus-for-supervised-word-sense-disambiguation/).
 
-The project also requires the presence of a GPU. (By default, it assumes the presence of at least two GPUs and uses the second, but that can be changed by modifying the CUDA_VISIBLE_DEVICES parameter in the justfile.)
+The project also requires the presence of a GPU.
 
 
 ## How to Run the Code
