@@ -7,6 +7,7 @@ sense, matching the WiC training label convention in
 """
 
 import json
+import logging
 import warnings
 from pathlib import Path
 
@@ -22,6 +23,8 @@ from transformers import (
 )
 
 from wic.preprocessing import preprocess_wic
+
+logger = logging.getLogger("div")
 
 
 def _predict_logits(entries: list[dict], model, tokenizer) -> np.ndarray:
@@ -158,10 +161,13 @@ def get_corpora_wic_score(
 
         summary_rows.append(summary)
         pair_rows.extend(corpus_pairs)
-        print(
-            f"  {csv_path.parent.name} {stem} "
-            f"P(diff) mean: {summary['wic_p_diff_mean']:.4f} "
-            f"acc: {summary['accuracy']:.4f} (n={summary['pair_count']})"
+        logger.info(
+            "%s %s P(diff) mean: %.4f acc: %.4f (n=%d)",
+            csv_path.parent.name,
+            stem,
+            summary["wic_p_diff_mean"],
+            summary["accuracy"],
+            summary["pair_count"],
         )
 
     output_dir.mkdir(parents=True, exist_ok=True)

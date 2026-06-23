@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 
 import click
@@ -6,6 +7,10 @@ import numpy as np
 import torch
 from datasets import Dataset  # type: ignore
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
+
+from utilities.logging_utils import start_logging
+
+logger = logging.getLogger("div")
 
 
 def load_efcamdat(data_path: Path) -> Dataset:
@@ -70,10 +75,11 @@ def main(model_dir: Path, efcamdat_dir: Path, output_dir: Path) -> None:
         raise SystemExit("No CUDA-capable GPU found. Aborting.")
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    start_logging(output_dir / "logs", file_name="apply_wic.log")
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
 
     for data_path in sorted(efcamdat_dir.glob("*.data")):
-        print(f"Processing {data_path.name} ...")
+        logger.info("Processing %s ...", data_path.name)
         dataset = load_efcamdat(data_path)
         ids = dataset["id"]
 
@@ -86,7 +92,7 @@ def main(model_dir: Path, efcamdat_dir: Path, output_dir: Path) -> None:
         ]
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2)
-        print(f"  Saved {len(results)} predictions to {out_path.name}")
+        logger.info("Saved %d predictions to %s", len(results), out_path.name)
 
 
 if __name__ == "__main__":

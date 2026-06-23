@@ -1,8 +1,11 @@
 import json
+import logging
 from pathlib import Path
 from typing import Generator, Any
 
 import pandas as pd  # type: ignore
+
+logger = logging.getLogger("div")
 
 
 def generate_comparison_pairs(
@@ -72,4 +75,6 @@ def convert_simulated_corpora(
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(pairs, f, indent=2)
-        print(f"  {csv_path.parent.name} {csv_path.stem}: {len(pairs)} pairs")
+        logger.info(
+            "%s %s: %d pairs", csv_path.parent.name, csv_path.stem, len(pairs)
+        )
