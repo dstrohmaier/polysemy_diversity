@@ -5,7 +5,8 @@ create-env:
     #!/usr/bin/env bash
     conda create -p ../diversity_env just libstdcxx-ng -c conda-forge
     conda run -p ../diversity_env pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu129
-    conda run -p ../diversity_env pip install jax[cuda13] numpy pandas scipy scikit-learn seaborn datasets transformers tqdm evaluate accelerate nltk
+    conda run -p ../diversity_env pip install jax[cuda13] numpy pandas scipy scikit-learn seaborn datasets transformers tqdm evaluate accelerate nltk spacy
+    conda run -p ../diversity_env python -m spacy download en_core_web_sm
 
 # ---- Vocab Creation
 
