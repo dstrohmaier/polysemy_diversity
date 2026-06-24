@@ -12,9 +12,9 @@ import logging
 from pathlib import Path
 
 import pandas as pd  # type: ignore
-import seaborn as sns
+import seaborn as sns  # type: ignore
 
-from analysis.io import save_fig, write_table
+from analysis.io import save_fig, write_csv, write_table
 from data_processing.wic_conversion import Corpus, iter_corpora
 
 logger = logging.getLogger("div")
@@ -33,6 +33,14 @@ def _corpus_row(corpus: Corpus) -> dict | None:
     n_same = sum(1 for p in pairs if p["label"] == 1)
     n_diff = n_pairs - n_same
 
+    # The sense-distribution entropy (theoretical Zipfian design) lives in the corpus
+    # meta sidecar; pull it in so same-sense rate can be related to sense diversity.
+    entropy_bits = float("nan")
+    if corpus.meta_path.exists():
+        entropy_bits = float(
+            json.loads(corpus.meta_path.read_text(encoding="utf-8"))["entropy_bits"]
+        )
+
     return {
         "lemma_pos": corpus.lemma_pos,
         "k": corpus.k,
@@ -41,6 +49,7 @@ def _corpus_row(corpus: Corpus) -> dict | None:
         "n_same": n_same,
         "n_diff": n_diff,
         "same_fraction": (n_same / n_pairs) if n_pairs else float("nan"),
+        "entropy_bits": entropy_bits,
     }
 
 
@@ -82,6 +91,23 @@ def _plot_same_fraction(per_corpus: pd.DataFrame, figures_dir: Path) -> None:
     save_fig(grid.figure, figures_dir, "same_fraction_vs_offset")
 
 
+def _plot_same_fraction_vs_entropy(per_corpus: pd.DataFrame, figures_dir: Path) -> None:
+    """Same-sense fraction against sense-distribution entropy (one point per corpus).
+
+    More diverse corpora (higher entropy) should pair fewer occurrences of the same
+    sense, so same-sense fraction is expected to fall as entropy rises.
+    """
+    grid = sns.relplot(
+        data=per_corpus,
+        x="entropy_bits",
+        y="same_fraction",
+        hue="k",
+        kind="scatter",
+    )
+    grid.set_axis_labels("Sense entropy (bits)", "Same-sense fraction")
+    save_fig(grid.figure, figures_dir, "same_fraction_vs_entropy")
+
+
 def analyse_wic_simulated(data_dir: Path, out_root: Path) -> None:
     """Run the WiC-simulated-data analysis, writing tables and figures to ``out_root``."""
     tables_dir = out_root / "tables"
@@ -97,7 +123,19 @@ def analyse_wic_simulated(data_dir: Path, out_root: Path) -> None:
         return
 
     per_corpus = pd.DataFrame(rows).sort_values(["lemma_pos", "k", "offset"])
-    write_table(per_corpus, tables_dir, "wic_per_corpus")
+    # The full per-corpus table is long -- useful as data, but unwieldy as
+    # Markdown/LaTeX -- so save it as CSV only.
+    write_csv(per_corpus, tables_dir, "wic_per_corpus")
+
+    # Per-(lemma, pos) sub-tables are small enough to render in all formats; drop the
+    # now-redundant lemma_pos column and write each into its own sub-directory.
+    per_lemma_dir = tables_dir / "per_lemma_pos"
+    for lemma_pos, group in per_corpus.groupby("lemma_pos"):
+        write_table(
+            group.drop(columns="lemma_pos"),
+            per_lemma_dir,
+            str(lemma_pos),
+        )
 
     summary = (
         per_corpus.groupby(["k", "offset"], as_index=False)
@@ -113,6 +151,7 @@ def analyse_wic_simulated(data_dir: Path, out_root: Path) -> None:
 
     _plot_same_vs_diff_counts(summary, figures_dir)
     _plot_same_fraction(per_corpus, figures_dir)
+    _plot_same_fraction_vs_entropy(per_corpus, figures_dir)
 
     logger.info(
         "wic_simulated: %d corpora, %d pairs total (%d same, %d diff)",

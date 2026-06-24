@@ -22,7 +22,7 @@ import pandas as pd  # type: ignore
 from scipy.spatial.distance import jensenshannon  # type: ignore
 from scipy.stats import entropy  # type: ignore
 import matplotlib.pyplot as plt
-import seaborn as sns
+import seaborn as sns  # type: ignore
 
 from analysis.io import save_fig, write_csv, write_table
 from data_processing.wic_conversion import Corpus, iter_corpora
