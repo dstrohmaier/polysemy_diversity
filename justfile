@@ -95,6 +95,26 @@ analyse-wic-simulated-all:
         just analyse-wic-simulated "$sim_dir" "output/analysis/$name"
     done
 
+analyse-vmf-scored scores_dir sim_dir output_dir:
+    python run_analysis.py vmf_scored {{ scores_dir }} {{ output_dir }} {{ sim_dir }}
+
+analyse-vmf-scored-all:
+    #!/usr/bin/env bash
+    for sim_dir in source_data/simulated_data/*/; do
+        name=$(basename "$sim_dir")
+        just analyse-vmf-scored "output/scores/$name" "$sim_dir" "output/analysis/$name"
+    done
+
+analyse-wic-scored scores_dir sim_dir output_dir:
+    python run_analysis.py wic_scored {{ scores_dir }} {{ output_dir }} {{ sim_dir }}
+
+analyse-wic-scored-all:
+    #!/usr/bin/env bash
+    for sim_dir in source_data/simulated_data/*/; do
+        name=$(basename "$sim_dir")
+        just analyse-wic-scored "output/scores/$name" "$sim_dir" "output/analysis/$name"
+    done
+
 # --- Data Transfer
 
 push2flamingo:

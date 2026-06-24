@@ -27,12 +27,16 @@ def write_table(
     name: str,
     cols_to_formatter: dict[str, Callable[[Any], str]] | None = None,
     index: bool = False,
+    convert_col_names: bool = False,
 ) -> None:
     """Write ``df`` to ``tables_dir`` as ``name``.{csv,md,tex}.
 
     ``cols_to_formatter`` maps a column (or list of columns) to a LaTeX cell
     formatter from :mod:`utilities.latex_utils`. When omitted, every float column
-    is rendered with :data:`~utilities.latex_utils.format_float`.
+    is rendered with :data:`~utilities.latex_utils.format_float`. Set
+    ``convert_col_names`` to render the LaTeX headers via
+    :func:`~utilities.latex_utils.col_formatter` (e.g. ``spearmanr`` -> ``SRC``,
+    ``F1`` -> ``F``\\ :sub:`1`); this replaces the default header escaping.
     """
     tables_dir.mkdir(parents=True, exist_ok=True)
 
@@ -47,7 +51,15 @@ def write_table(
         float_cols = [c for c in df.columns if pd.api.types.is_float_dtype(df[c])]
         cols_to_formatter = {c: format_float for c in float_cols}
     tex_path.write_text(
-        df_to_latex(df, cols_to_formatter, index=index), encoding="utf-8"
+        df_to_latex(
+            df,
+            cols_to_formatter,
+            index=index,
+            # df_to_latex forbids escaping and converting headers at once.
+            escape_col_names=not convert_col_names,
+            convert_col_names=convert_col_names,
+        ),
+        encoding="utf-8",
     )
 
     logger.info("Wrote table %s (.csv/.md/.tex, %d rows)", name, len(df))
