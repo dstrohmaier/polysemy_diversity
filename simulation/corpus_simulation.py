@@ -116,7 +116,8 @@ def _offset_grid(lo: float, hi: float, step: float) -> list[float]:
 
 
 SLOPE_FLOOR = 0.05  # keep the distribution well-defined when baseline+offset is small
-MIN_CORPUS_SENTENCES = 10  # skip variants too small (after dedup) to be informative
+# Skip variants too small (after dedup) to score robustly.
+MIN_CORPUS_SENTENCES = 30
 
 
 @dataclass(frozen=True)
