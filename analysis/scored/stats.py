@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd  # type: ignore
+import matplotlib.pyplot as plt
 import seaborn as sns  # type: ignore
 from scipy.stats import bootstrap, spearmanr  # type: ignore
 
@@ -171,7 +172,6 @@ def score_grid(df: pd.DataFrame, score_col: str) -> pd.DataFrame:
 
 def score_heatmap(grid: pd.DataFrame, figures_dir: Path, name: str, cbar_label: str) -> None:
     """Render a :func:`score_grid` pivot as a heatmap PDF."""
-    import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots()
     sns.heatmap(grid, annot=True, fmt=".2f", cbar_kws={"label": cbar_label}, ax=ax)
