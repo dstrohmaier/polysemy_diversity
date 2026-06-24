@@ -69,18 +69,21 @@ def generate_comparison_pairs(
     """Pair occurrences of each lemma into WiC-style sentence-pair examples.
 
     Operates on the simulated-corpus schema (lemma/pos/sense/sentence/start/end).
-    Within each lemma the rows are shuffled and paired two-at-a-time; the gold
-    ``label`` is whether the two occurrences share a sense.
+    Within each lemma the rows are shuffled and arranged in a cycle: each row ``i`` is
+    paired with its successor ``(i + 1) mod N``. This yields exactly ``N`` pairs (one
+    per sentence) with every sentence appearing in exactly two pairs -- once as the
+    left element and once as the right -- so the pair count matches the number of
+    sentences. The gold ``label`` is whether the two occurrences share a sense.
     """
     for lemma, sub_df in df.groupby("lemma"):
         shuffled_df = sub_df.sample(frac=1, random_state=seed).reset_index()
-        pairs = [group for _, group in shuffled_df.groupby(shuffled_df.index // 2)]
+        n = len(shuffled_df)
+        if n < 2:  # a lone sentence cannot form a (non-self) pair
+            continue
 
-        for pair_df in pairs:
-            if len(pair_df) < 2:  # can happen for odd numbers
-                continue
-
-            r0, r1 = pair_df.iloc[0], pair_df.iloc[1]
+        for i in range(n):
+            r0 = shuffled_df.iloc[i]
+            r1 = shuffled_df.iloc[(i + 1) % n]
             assert (
                 r0.pos == r1.pos
             ), f"paired rows disagree on PoS: {r0.pos!r} vs {r1.pos!r}"
