@@ -40,8 +40,8 @@ def _load_targets(path: Path) -> list[tuple[str, str]]:
     show_default=True,
     help="Exact sense count(s) per verb. Repeat to sweep several k values.",
 )
-@click.option("--offset-min", type=float, default=-0.2, show_default=True)
-@click.option("--offset-max", type=float, default=0.2, show_default=True)
+@click.option("--offset-min", type=float, default=-0.5, show_default=True)
+@click.option("--offset-max", type=float, default=0.5, show_default=True)
 @click.option("--offset-step", type=float, default=0.1, show_default=True)
 @click.option(
     "--n-draws",

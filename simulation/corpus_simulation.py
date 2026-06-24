@@ -2,8 +2,8 @@
 
 import hashlib
 import json
+import logging
 import shutil
-import warnings
 from pathlib import Path
 from itertools import product
 from datetime import datetime
@@ -15,6 +15,44 @@ from scipy.stats import entropy  # type: ignore
 
 from simulation.zipfian import estimate_slopes_for_words, zipfian_probs_for_senses
 
+logger = logging.getLogger("div")
+
+
+def _zipfian_unique_counts(
+    probs: np.ndarray, available: np.ndarray, n_draws: int
+) -> np.ndarray:
+    """Per-sense sentence counts that stay Zipfian without ever repeating a sentence.
+
+    Duplicated sentences are uninformative, so each sentence may be used at most
+    once. A sense with only ``available_s`` distinct sentences can therefore supply
+    at most that many examples, which caps how large a corpus can stay proportional
+    to ``probs``. We take the largest total ``N <= n_draws`` for which the Zipfian
+    target ``round(probs_s * N)`` fits within every sense's supply -- set by the
+    binding sense ``min_s floor(available_s / probs_s)`` -- then allocate
+    ``round(probs_s * N)`` per sense, repairing rounding so the counts sum to ``N``,
+    stay within ``available``, and keep every sense at >= 1 (so all k senses survive).
+    The result is smaller than ``n_draws`` when some sense is sentence-poor, but its
+    sense proportions track the Zipfian design as closely as integer counts allow.
+    """
+    n_max = int(np.floor(available / probs).min())
+    target_n = min(n_draws, n_max)
+
+    counts = np.round(probs * target_n).astype(int)
+    counts = np.clip(counts, 1, available.astype(int))
+
+    # Repair the total toward target_n: rounding and the >=1 floor can push the sum
+    # off. Remove from / add to the sense with the most slack, never crossing the
+    # [1, available] bounds, so the realised distribution stays as Zipfian as possible.
+    while counts.sum() > target_n and (counts > 1).any():
+        counts[np.argmax(np.where(counts > 1, counts - 1, -1))] -= 1
+    while counts.sum() < target_n:
+        slack = available.astype(int) - counts
+        if slack.max() <= 0:
+            break
+        counts[np.argmax(slack)] += 1
+
+    return counts
+
 
 def simulate_polysemy(
     wsd_df: pd.DataFrame,
@@ -25,15 +63,28 @@ def simulate_polysemy(
     rng: np.random.Generator | None = None,
 ) -> pd.DataFrame:
     """
-    Draw n_draws examples from (lemma, pos) using sense_probs.
+    Draw up to n_draws *distinct* example sentences from (lemma, pos) using sense_probs.
 
-    Each draw independently samples a sense then a random example from that sense.
+    Sentences are sampled without replacement per sense, so the corpus never repeats a
+    sentence (duplicates are uninformative). Because a sense supplies at most its number
+    of distinct sentences, the corpus shrinks below n_draws when a sense is
+    sentence-poor; the realised sense proportions still track the Zipfian sense_probs as
+    closely as integer counts allow (see :func:`_zipfian_unique_counts`).
+
     Returns a DataFrame with columns: lemma, pos, sense, sentence, start, end.
     """
     if rng is None:
         rng = np.random.default_rng()
 
     subset = wsd_df[(wsd_df["lemma"] == lemma) & (wsd_df["pos"] == pos)]
+
+    # A sentence can appear several times in the WSD data -- both as exact repeats
+    # within a sense and, occasionally, under *different* senses. A sentence tagged
+    # with conflicting senses is ambiguous, so drop all its copies; then collapse the
+    # remaining exact repeats so every surviving sentence is unique and maps to one
+    # sense. This makes "available" the true pool of distinct, unambiguous sentences.
+    sense_per_sentence = subset.groupby("sentence")["sense"].transform("nunique")
+    subset = subset[sense_per_sentence == 1].drop_duplicates("sentence")
 
     missing = set(sense_probs) - set(subset["sense"].unique())
     if missing:
@@ -46,38 +97,17 @@ def simulate_polysemy(
     senses = list(sense_probs.keys())
     probs = np.array([sense_probs[s] for s in senses], dtype=float)
     sense_groups = {s: subset[subset["sense"] == s] for s in senses}
+    available = np.array([len(sense_groups[s]) for s in senses], dtype=int)
 
-    # Pre-shuffle each sense's examples; cycle through the shuffled order before repeating.
-    sense_queues: dict[str, list[int]] = {}
-    for s, group in sense_groups.items():
-        sense_queues[s] = rng.permutation(len(group)).tolist()
+    counts = _zipfian_unique_counts(probs, available, n_draws)
 
-    def next_row(sense: str) -> pd.Series:
-        queue = sense_queues[sense]
-        if not queue:
-            warnings.warn(
-                f"Exhausted examples for sense {sense!r}; repeating from the beginning."
-            )
-            queue.extend(rng.permutation(len(sense_groups[sense])).tolist())
-        return sense_groups[sense].iloc[queue.pop()]
-
-    records = []
-    for sense in rng.choice(senses, size=n_draws, p=probs):
-        row = next_row(sense)
-        records.append(
-            {
-                "lemma": row["lemma"],
-                "pos": row["pos"],
-                "sense": row["sense"],
-                "sentence": row["sentence"],
-                "start": row["start"],
-                "end": row["end"],
-            }
-        )
-
-    return pd.DataFrame(
-        records, columns=["lemma", "pos", "sense", "sentence", "start", "end"]
-    )
+    parts = [
+        sense_groups[s].sample(n=int(c), replace=False, random_state=rng)
+        for s, c in zip(senses, counts)
+        if c > 0
+    ]
+    corpus = pd.concat(parts, ignore_index=True)
+    return corpus[["lemma", "pos", "sense", "sentence", "start", "end"]]
 
 
 def _offset_grid(lo: float, hi: float, step: float) -> list[float]:
@@ -86,7 +116,7 @@ def _offset_grid(lo: float, hi: float, step: float) -> list[float]:
 
 
 SLOPE_FLOOR = 0.05  # keep the distribution well-defined when baseline+offset is small
-MAX_DRAW_ATTEMPTS = 50  # redraws allowed to realise all k senses in a finite sample
+MIN_CORPUS_SENTENCES = 10  # skip variants too small (after dedup) to be informative
 
 
 @dataclass(frozen=True)
@@ -134,27 +164,30 @@ def _draw_corpus_with_all_senses(
     n_draws: int,
     rng: np.random.Generator,
 ) -> pd.DataFrame:
-    """Draw a corpus, retrying until all k senses are realised.
+    """Draw a unique-sentence corpus in which all k senses are realised.
 
-    A finite multinomial draw can miss a rare sense, leaving fewer than k senses
-    realised. Reject and redraw until all k appear so every corpus has *exactly*
-    k senses per word.
+    ``simulate_polysemy`` allocates at least one distinct sentence to every sense
+    (each included sense has >= min_examples distinct sentences in the source), so a
+    single draw realises all k senses by construction -- no rejection loop is needed.
+    We still assert the contract so a future configuration that breaks it (e.g. a
+    sense-poorer corpus than min_examples allows) fails loudly rather than silently
+    dropping a sense.
 
     Raises
     ------
     RuntimeError
-        If all k senses cannot be realised within MAX_DRAW_ATTEMPTS.
+        If the drawn corpus does not realise all k senses.
     """
-    for _ in range(MAX_DRAW_ATTEMPTS):
-        candidate = simulate_polysemy(
-            sub_df, lemma, pos, sense_probs, n_draws=n_draws, rng=rng
-        )
-        if candidate["sense"].nunique() == k:
-            return candidate
-    raise RuntimeError(
-        f"{lemma!r} ({pos}): could not realise all {k} senses in {n_draws} "
-        f"draws after {MAX_DRAW_ATTEMPTS} attempts."
+    corpus = simulate_polysemy(
+        sub_df, lemma, pos, sense_probs, n_draws=n_draws, rng=rng
     )
+    realised = corpus["sense"].nunique()
+    if realised != k:
+        raise RuntimeError(
+            f"{lemma!r} ({pos}): drew {realised} senses but expected {k}; the "
+            f"per-sense sentence supply is too small to realise all senses."
+        )
+    return corpus
 
 
 def _write_variant(
@@ -200,6 +233,18 @@ def simulate_word_corpus(
         )
 
         variant = f"k{k}_offset_{'m' if offset < 0 else 'p'}{abs(offset):.2f}"
+        if len(corpus) < MIN_CORPUS_SENTENCES:
+            # The unique-sentence supply was too thin for this (k, offset) to yield an
+            # informative corpus; skip it rather than write a near-empty variant.
+            logger.info(
+                "%s_%s %s: only %d unique sentences (< %d), skipping",
+                lemma,
+                pos,
+                variant,
+                len(corpus),
+                MIN_CORPUS_SENTENCES,
+            )
+            continue
         _write_variant(
             word_dir,
             variant,

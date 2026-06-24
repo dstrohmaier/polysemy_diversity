@@ -1,11 +1,66 @@
 import json
 import logging
+import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator, Any
+from typing import Generator, Any, Iterator
 
 import pandas as pd  # type: ignore
 
 logger = logging.getLogger("div")
+
+# Matches a variant stem such as "k3_offset_m0.20" or "k5_offset_p0.00", produced by
+# simulate_zipfian_corpora as f"k{k}_offset_{'m' if offset < 0 else 'p'}{abs(offset):.2f}".
+_VARIANT_RE = re.compile(r"^k(?P<k>\d+)_offset_(?P<sign>[mp])(?P<mag>[\d.]+)$")
+
+
+@dataclass(frozen=True)
+class Corpus:
+    """One simulated corpus: a single (lemma, pos, k, offset) variant on disk.
+
+    ``data_path`` is the WiC ``.data`` sibling; it only exists once this corpus has
+    been through ``convert_simulated_corpora``.
+    """
+
+    lemma_pos: str  # the parent directory name, e.g. "<lemma>_<pos>"
+    k: int
+    offset: float
+    csv_path: Path
+    meta_path: Path
+    data_path: Path
+
+
+def parse_variant(stem: str) -> tuple[int, float]:
+    """Parse a variant stem like ``k3_offset_m0.20`` into ``(k, offset)``."""
+    match = _VARIANT_RE.match(stem)
+    if match is None:
+        raise ValueError(f"Unrecognised variant stem: {stem!r}")
+    offset = float(match.group("mag"))
+    if match.group("sign") == "m":
+        offset = -offset
+    return int(match.group("k")), offset
+
+
+def iter_corpora(sim_dir: Path) -> Iterator[Corpus]:
+    """Yield one :class:`Corpus` per simulated CSV under ``sim_dir``.
+
+    Globs ``<lemma>_<pos>/k*_offset_*.csv`` (the layout from
+    ``simulate_zipfian_corpora``) and derives the sibling ``.meta.json`` / ``.data``
+    paths. The trailing suffix is swapped explicitly rather than via
+    ``Path.with_suffix`` because the ``.`` in the offset magnitude (e.g.
+    ``k3_offset_p0.00``) confuses pathlib's suffix handling.
+    """
+    for csv_path in sorted(sim_dir.glob("*/k*_offset_*.csv")):
+        base = csv_path.name[: -len(".csv")]
+        k, offset = parse_variant(base)
+        yield Corpus(
+            lemma_pos=csv_path.parent.name,
+            k=k,
+            offset=offset,
+            csv_path=csv_path,
+            meta_path=csv_path.parent / (base + ".meta.json"),
+            data_path=csv_path.parent / (base + ".data"),
+        )
 
 
 def generate_comparison_pairs(
@@ -61,20 +116,17 @@ def convert_simulated_corpora(
     ``output_dir/<lemma>_<pos>/k*_offset_*.data`` for each, ready for
     ``apply_wic.py`` to consume.
     """
-    for csv_path in sorted(sim_dir.glob("*/k*_offset_*.csv")):
-        # Not csv_path.with_suffix(...): the "0.00" in the variant name confuses
-        # pathlib's suffix handling. Swap the trailing ".csv" explicitly.
-        meta_path = csv_path.parent / (csv_path.name[: -len(".csv")] + ".meta.json")
-        if not meta_path.exists():
+    for corpus in iter_corpora(sim_dir):
+        if not corpus.meta_path.exists():
             continue  # skip stray CSVs without sidecar metadata
 
-        df = pd.read_csv(csv_path)
+        df = pd.read_csv(corpus.csv_path)
         pairs = list(generate_comparison_pairs(df, seed=seed))
 
-        out_path = output_dir / csv_path.parent.name / (csv_path.stem + ".data")
+        out_path = output_dir / corpus.lemma_pos / (corpus.csv_path.stem + ".data")
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(pairs, f, indent=2)
         logger.info(
-            "%s %s: %d pairs", csv_path.parent.name, csv_path.stem, len(pairs)
+            "%s %s: %d pairs", corpus.lemma_pos, corpus.csv_path.stem, len(pairs)
         )
