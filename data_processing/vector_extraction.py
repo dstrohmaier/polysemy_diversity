@@ -29,24 +29,80 @@ class WordVectorExtractor:
         self.nlp = nlp
         self.device = device
 
-    def get_word_vectors(
+    def get_word_vectors_from_spans(
+        self,
+        contexts,
+        target_layers: tuple[int, ...] = (-1,),
+    ):
+        """Extract target embeddings using each context's recorded character span.
+
+        Each context carries the authoritative span of the target occurrence
+        (``ctx["start"]``/``ctx["end"]``, propagated from the WSD annotation). That
+        span is mapped to subword tokens whose (optionally layer-averaged) hidden
+        states are mean-pooled and L2-normalised.
+
+        Preferred over :meth:`get_word_vectors_with_spacy` for annotated corpora:
+        it never drops an occurrence over a spaCy lemma/POS disagreement (e.g. a gold
+        VERB that spaCy tags AUX), and it always embeds the labelled occurrence even
+        when a sentence repeats the word.
+
+        Returns an array of shape (n_found, hidden_size); rows are produced only for
+        contexts whose span aligned to at least one subword.
+        """
+        self.model.eval()
+        vectors = []
+        n_skipped_no_span = 0
+        n_skipped_unaligned = 0
+        for ctx in contexts:
+            offset_start = ctx.get("start")
+            offset_end = ctx.get("end")
+            if offset_start is None or offset_end is None or offset_end <= offset_start:
+                n_skipped_no_span += 1
+                continue
+
+            word_vector = self._embed_span(ctx["sentence"], offset_start, offset_end, target_layers)
+            if word_vector is None:
+                n_skipped_unaligned += 1
+                continue
+            vectors.append(word_vector)
+
+        n_skipped = n_skipped_no_span + n_skipped_unaligned
+        if n_skipped:
+            logger.info(
+                "get_word_vectors_from_spans: extracted %d/%d, skipped %d "
+                "(%d missing span, %d unaligned to subwords)",
+                len(vectors),
+                len(contexts),
+                n_skipped,
+                n_skipped_no_span,
+                n_skipped_unaligned,
+            )
+
+        if vectors:
+            return np.array(vectors)
+        return np.empty((0, self.model.config.hidden_size))
+
+    def get_word_vectors_with_spacy(
         self,
         contexts,
         word,
         target_pos,
         target_layers: tuple[int, ...] = (-1,),
     ):
-        """Extract embeddings of ``word`` (with ``target_pos``) from each context.
+        """Extract target embeddings by locating ``word``/``target_pos`` with spaCy.
 
-        For each context, the target token is located by matching ``word``/
-        ``target_pos`` with spaCy, its character span is mapped to subword tokens,
-        and the (optionally layer-averaged) hidden states of those subwords are
+        For each context the target token is found by matching ``word``/``target_pos``
+        against the spaCy analysis of the sentence, its character span is mapped to
+        subword tokens, and their (optionally layer-averaged) hidden states are
         mean-pooled and L2-normalised.
 
-        Returns an array of shape (n_found, hidden_size); rows are produced only
-        for contexts where the target word was found and aligned to a subword.
-        """
+        Use this only when contexts lack recorded spans; for annotated corpora prefer
+        :meth:`get_word_vectors_from_spans`, since spaCy's lemma/POS can disagree with
+        the gold annotation and silently drop occurrences.
 
+        Returns an array of shape (n_found, hidden_size); rows are produced only for
+        contexts where the target word was found and aligned to a subword.
+        """
         self.model.eval()
         vectors = []
         n_skipped_not_found = 0
@@ -70,53 +126,16 @@ class WordVectorExtractor:
             offset_start = spacy_token.idx
             offset_end = spacy_token.idx + len(spacy_token.text)
 
-            encoding = self.tokenizer(
-                text,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=1024,
-                return_offsets_mapping=True,
-            )
-
-            offsets = encoding.pop("offset_mapping")[0].tolist()
-            model_inputs = {k: v.to(self.device) for k, v in encoding.items()}
-
-            with torch.no_grad():
-                outputs = self.model(**model_inputs, output_hidden_states=True)
-
-            # outputs.hidden_states is a tuple (embeddings, layer_1, ..., layer_N).
-            # Average the requested layers (default: just the last).
-            hidden_states = torch.mean(
-                torch.stack(
-                    [outputs.hidden_states[layer][0] for layer in target_layers],
-                    dim=0,
-                ),
-                dim=0,
-            )
-
-            word_token_indices = [
-                i
-                for i, (token_start, token_end) in enumerate(offsets)
-                if token_end > token_start  # skip special tokens (span (0, 0))
-                and not (token_end <= offset_start or token_start >= offset_end)
-            ]
-            if not word_token_indices:
+            word_vector = self._embed_span(text, offset_start, offset_end, target_layers)
+            if word_vector is None:
                 n_skipped_unaligned += 1
                 continue
-
-            word_vector = (
-                hidden_states[word_token_indices].mean(dim=0).detach().cpu().numpy()
-            )
-            norm = np.linalg.norm(word_vector)
-            if norm > 0:
-                word_vector = word_vector / norm
             vectors.append(word_vector)
 
         n_skipped = n_skipped_not_found + n_skipped_unaligned
         if n_skipped:
             logger.info(
-                "get_word_vectors(%r, %s): extracted %d/%d, skipped %d "
+                "get_word_vectors_with_spacy(%r, %s): extracted %d/%d, skipped %d "
                 "(%d not found, %d unaligned to subwords)",
                 word,
                 target_pos,
@@ -130,6 +149,54 @@ class WordVectorExtractor:
         if vectors:
             return np.array(vectors)
         return np.empty((0, self.model.config.hidden_size))
+
+    def _embed_span(self, text, offset_start, offset_end, target_layers):
+        """Embed the subwords overlapping ``[offset_start, offset_end)`` in ``text``.
+
+        Returns the mean-pooled, L2-normalised hidden state, or ``None`` if the span
+        aligns to no subword (e.g. it falls past the truncation length).
+        """
+        encoding = self.tokenizer(
+            text,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=1024,
+            return_offsets_mapping=True,
+        )
+
+        offsets = encoding.pop("offset_mapping")[0].tolist()
+        model_inputs = {k: v.to(self.device) for k, v in encoding.items()}
+
+        with torch.no_grad():
+            outputs = self.model(**model_inputs, output_hidden_states=True)
+
+        # outputs.hidden_states is a tuple (embeddings, layer_1, ..., layer_N).
+        # Average the requested layers (default: just the last).
+        hidden_states = torch.mean(
+            torch.stack(
+                [outputs.hidden_states[layer][0] for layer in target_layers],
+                dim=0,
+            ),
+            dim=0,
+        )
+
+        word_token_indices = [
+            i
+            for i, (token_start, token_end) in enumerate(offsets)
+            if token_end > token_start  # skip special tokens (span (0, 0))
+            and not (token_end <= offset_start or token_start >= offset_end)
+        ]
+        if not word_token_indices:
+            return None
+
+        word_vector = (
+            hidden_states[word_token_indices].mean(dim=0).detach().cpu().numpy()
+        )
+        norm = np.linalg.norm(word_vector)
+        if norm > 0:
+            word_vector = word_vector / norm
+        return word_vector
 
     @classmethod
     def from_config(cls, config: ExtractionConfig):

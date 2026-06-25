@@ -21,12 +21,15 @@ corpus, and writes the collected scores to a single ``vmf_scores.csv``.
 """
 
 import json
+import logging
 from pathlib import Path
 
 import numpy as np
 import pandas as pd  # type: ignore
 
 from data_processing.vector_extraction import ExtractionConfig, WordVectorExtractor
+
+logger = logging.getLogger("div")
 
 
 def estimate_vmf_parameters(vectors):
@@ -63,7 +66,10 @@ def score_corpus(df: pd.DataFrame, extractor: WordVectorExtractor, meta: dict):
     target_pos = df["pos"].iloc[0]
     contexts = df.to_dict("records")
 
-    vectors = extractor.get_word_vectors(contexts, word, target_pos)
+    # The simulated corpus carries each occurrence's gold span, so locate the target
+    # by span rather than re-finding it with spaCy (which drops occurrences
+    # where its lemma/POS disagrees with the annotation).
+    vectors = extractor.get_word_vectors_from_spans(contexts)
     if len(vectors) < 2:
         return None
 
@@ -115,9 +121,12 @@ def get_corpora_vmf(
             continue
 
         rows.append(record)
-        print(
-            f"  {csv_path.parent.name} {csv_path.stem} "
-            f"vMF κ: {record['vmf_kappa']:.4f} (n={record['vector_count']})"
+        logger.info(
+            "%s %s vMF kappa: %.4f (n=%d)",
+            csv_path.parent.name,
+            csv_path.stem,
+            record["vmf_kappa"],
+            record["vector_count"],
         )
 
     result = pd.DataFrame(rows)
