@@ -80,11 +80,14 @@ def wsd_generator(data_dir: Path) -> Generator[dict[str, Any], None, None]:
             pos = word_el.get("pos")
             sense = word_el.get("sense")
 
-            buffer.append((text, break_level, lemma, pos, sense))
-
-            if break_level in _SENTENCE_BREAKS:
+            # break_level describes the break *before* this word, so a sentence/
+            # paragraph break means this word starts a new sentence: flush the buffer
+            # accumulated so far, then begin the new sentence with this word.
+            if break_level in _SENTENCE_BREAKS and buffer:
                 yield from _finalize_sentence(buffer)
                 buffer = []
+
+            buffer.append((text, break_level, lemma, pos, sense))
 
         yield from _finalize_sentence(buffer)
 

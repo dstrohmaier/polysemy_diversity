@@ -122,3 +122,6 @@ push2flamingo:
 
 pull-analysis:
     rsync -rtvu --progress --exclude-from=../../ignorelist.txt ds858@flamingo.cl.cam.ac.uk:/local/scratch/ds858/wic_shift/output/analysis ./output/
+
+pull-simulated:
+    rsync -rtvu --progress --exclude-from=../../ignorelist.txt ds858@flamingo.cl.cam.ac.uk:/local/scratch/ds858/wic_shift/source_data/simulated_data ./source_data/
