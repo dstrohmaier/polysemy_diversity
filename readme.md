@@ -26,9 +26,13 @@ Our simulation study covers for each PoS the 100 lemmata with most senses in Wor
 
 ## Requirements
 
-In addition to the libraries specified installed by the create-env recipe (conda + pip) in the justfile, this project requires the [Google WSD corpus](https://research.google/blog/a-large-corpus-for-supervised-word-sense-disambiguation/).
+In addition to the libraries specified installed by the create-env recipe (conda + pip) in the justfile, this project requires the [Google WSD corpus](https://research.google/blog/a-large-corpus-for-supervised-word-sense-disambiguation/). These data are available at: github.com/google-research-datasets/word_sense_disambigation_corpora
 
-The project also requires the presence of a GPU.
+The WiC data are available in the required format at:
+- https://github.com/ameta13/mcl-wic/tree/main/data_dumped_full/wic_train-en-en
+- https://github.com/cardiffnlp/TempoWiC/tree/main/data
+
+The project also assumes the presence of a GPU.
 
 
 ## How to Run the Code
