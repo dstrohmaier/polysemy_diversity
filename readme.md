@@ -11,14 +11,14 @@ The two methods are:
 
 ## Simulation Study
 
-To compare the two methods for estimating diversity, we use a simulation study with known ground-truth: We create artificial corpora where we know the correct senses by sampling from a WSD corpus. To make the corpus realistic, we start from a Zipfian distribution and vary two parameters: 
+To compare the two methods for estimating diversity, we use a simulation study with known ground-truth: We create artificial datasets where we know the correct senses by sampling from a WSD corpus. To make the datasets realistic, we start from a Zipfian distribution and vary two parameters: 
 
 1. the slope of the Zipfian distribution, and 
 2. the support of the Zipfian distribution, i.e. the number of senses.
 
 We estimate the slope from the WSD corpus. (The estimate of the slope uses all occurrences of the lemma. In other processing steps, we require a minimum of 5 instances for simulation purposes, but the base slope should be naturalistic.)
 
-By using sense-annotated occurrences to create corpora, we can compare the diversity estimates for datasets with known properties.
+By using sense-annotated occurrences to create dataset with simulated distributions, we can compare the diversity estimates for datasets with known properties.
 
 ### Vocabularies
 
@@ -45,8 +45,8 @@ The commands required to run the code are provided in the justfile. The order of
 
 1. create-env: Create conda environment with required libraries.
 2. create-vocab: Create the vocabularies of the lemmata with most senses (one file per PoS).
-3. simulate-target-verbs: Simulate a corpus for the list of ten target verbs.
-4. simulate-most-diverse-all: Simulate a corpus for each of the four most-diverse PoS vocabularies.
+3. simulate-target-verbs: Create a dataset with simulated sense distribution for the list of ten target verbs.
+4. simulate-most-diverse-all: Create datasets with simulated sense distributions for each of the four most-diverse PoS vocabularies.
 5. train-wic-tempowic: Train the WiC model (on WiC + TempoWiC) used for WiC-based scoring.
-6. score-vmf-all: Score all simulated corpora with the vMF method, writing the results to `output/scores/<dataset>`.
-7. score-wic-all: Score all simulated corpora with the WiC method, writing the results to `output/scores/<dataset>`.
+6. score-vmf-all: Score all simulation datasets with the vMF method, writing the results to `output/scores/<dataset>`.
+7. score-wic-all: Score all simulation datasets with the WiC method, writing the results to `output/scores/<dataset>`.
