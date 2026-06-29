@@ -33,18 +33,25 @@ def _corpus_row(corpus: Corpus) -> dict | None:
     n_same = sum(1 for p in pairs if p["label"] == 1)
     n_diff = n_pairs - n_same
 
-    # The sense-distribution entropy (theoretical Zipfian design) lives in the corpus
-    # meta sidecar; pull it in so same-sense rate can be related to sense diversity.
+    # The sense-distribution entropy (theoretical Zipfian design) and the Zipfian
+    # slopes live in the corpus meta sidecar; pull them in so the same-sense rate can be
+    # related to sense diversity, and so plots/tables can report the actual (applied)
+    # slope alongside the nominal offset.
     entropy_bits = float("nan")
+    baseline_slope = float("nan")
+    applied_slope = float("nan")
     if corpus.meta_path.exists():
-        entropy_bits = float(
-            json.loads(corpus.meta_path.read_text(encoding="utf-8"))["entropy_bits"]
-        )
+        meta = json.loads(corpus.meta_path.read_text(encoding="utf-8"))
+        entropy_bits = float(meta["entropy_bits"])
+        baseline_slope = float(meta["baseline_slope"])
+        applied_slope = float(meta["applied_slope"])
 
     return {
         "lemma_pos": corpus.lemma_pos,
         "k": corpus.k,
         "offset": corpus.offset,
+        "baseline_slope": baseline_slope,
+        "applied_slope": applied_slope,
         "n_pairs": n_pairs,
         "n_same": n_same,
         "n_diff": n_diff,
@@ -53,42 +60,44 @@ def _corpus_row(corpus: Corpus) -> dict | None:
     }
 
 
-def _plot_same_vs_diff_counts(summary: pd.DataFrame, figures_dir: Path) -> None:
-    """Grouped bar of same- vs different-sense pair counts by (k, offset)."""
-    long = summary.melt(
-        id_vars=["k", "offset"],
+def _plot_same_vs_diff_counts(per_corpus: pd.DataFrame, figures_dir: Path) -> None:
+    """Same- vs different-sense pair counts against the applied slope, faceted by k.
+
+    One point per corpus at its own ``applied_slope`` (baseline + offset). The applied
+    slope is lemma-specific, so corpora do not share x-positions; this is a scatter
+    rather than a grouped bar over the offset grid.
+    """
+    long = per_corpus.melt(
+        id_vars=["k", "applied_slope"],
         value_vars=["n_same", "n_diff"],
         var_name="kind",
         value_name="count",
     )
     long["kind"] = long["kind"].str.replace("n_", "", regex=False)
 
-    grid = sns.catplot(
+    grid = sns.relplot(
         data=long,
-        x="offset",
+        x="applied_slope",
         y="count",
         hue="kind",
         col="k",
-        kind="bar",
-        errorbar=None,
+        kind="scatter",
     )
-    grid.set_axis_labels("Zipfian slope offset", "Total pairs")
+    grid.set_axis_labels("Applied Zipfian slope", "Pairs")
     save_fig(grid.figure, figures_dir, "same_vs_diff_counts")
 
 
 def _plot_same_fraction(per_corpus: pd.DataFrame, figures_dir: Path) -> None:
-    """Same-sense fraction across offset, hued by k."""
+    """Same-sense fraction against the applied slope, hued by k (one point per corpus)."""
     grid = sns.relplot(
         data=per_corpus,
-        x="offset",
+        x="applied_slope",
         y="same_fraction",
         hue="k",
-        kind="line",
-        markers=True,
-        errorbar="sd",
+        kind="scatter",
     )
-    grid.set_axis_labels("Zipfian slope offset", "Same-sense fraction")
-    save_fig(grid.figure, figures_dir, "same_fraction_vs_offset")
+    grid.set_axis_labels("Applied Zipfian slope", "Same-sense fraction")
+    save_fig(grid.figure, figures_dir, "same_fraction_vs_slope")
 
 
 def _plot_same_fraction_vs_entropy(per_corpus: pd.DataFrame, figures_dir: Path) -> None:
@@ -137,10 +146,14 @@ def analyse_wic_simulated(data_dir: Path, out_root: Path) -> None:
             str(lemma_pos),
         )
 
+    # Group by the offset (the regular design grid); report the mean applied slope in
+    # the cell too, since the applied slope is lemma-specific and so varies within a
+    # cell. Both the offset and the (mean) actual slope are thus available in the table.
     summary = (
         per_corpus.groupby(["k", "offset"], as_index=False)
         .agg(
             n_corpora=("n_pairs", "size"),
+            mean_applied_slope=("applied_slope", "mean"),
             n_pairs=("n_pairs", "sum"),
             n_same=("n_same", "sum"),
             n_diff=("n_diff", "sum"),
@@ -149,7 +162,7 @@ def analyse_wic_simulated(data_dir: Path, out_root: Path) -> None:
     )
     write_table(summary, tables_dir, "wic_summary")
 
-    _plot_same_vs_diff_counts(summary, figures_dir)
+    _plot_same_vs_diff_counts(per_corpus, figures_dir)
     _plot_same_fraction(per_corpus, figures_dir)
     _plot_same_fraction_vs_entropy(per_corpus, figures_dir)
 

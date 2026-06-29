@@ -155,6 +155,10 @@ class WiCScoringTestCase(unittest.TestCase):
         self.assertEqual([p["id"] for p in pairs], ["x", "y"])
         self.assertEqual([p["label"] for p in pairs], [0, 1])
         self.assertTrue(all(isinstance(p["label"], int) for p in pairs))
+        # Pair rows carry the Zipfian slopes (the analysis plots performance against
+        # the applied slope, so each pair must know its corpus's actual slope).
+        self.assertTrue(all(p["baseline_slope"] == 1.2 for p in pairs))
+        self.assertTrue(all(p["applied_slope"] == 1.0 for p in pairs))
 
     def test_empty_entries_rejected(self):
         with self.assertRaises(AssertionError):

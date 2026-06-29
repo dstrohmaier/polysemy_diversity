@@ -100,6 +100,8 @@ def score_corpus_wic(
             "word": word,
             "pos": pos,
             "k_senses": meta["k_senses"],
+            "baseline_slope": meta["baseline_slope"],
+            "applied_slope": meta["applied_slope"],
             "offset": offset,
             "p_diff": float(pd_),
             "label": int(e["label"]),

@@ -74,29 +74,42 @@ def _corpus_row(corpus: Corpus) -> dict | None:
     }
 
 
-def _plot_entropy_vs_offset(per_corpus: pd.DataFrame, figures_dir: Path) -> None:
-    """Empirical vs theoretical entropy across offset, hued by k (side by side)."""
+def _plot_entropy_vs_slope(per_corpus: pd.DataFrame, figures_dir: Path) -> None:
+    """Empirical vs theoretical entropy against the applied Zipfian slope.
+
+    One line per (kind, k) combination -- i.e. empirical and theoretical curves for
+    each sense count k. The applied slope is lemma-specific, so there is no shared
+    x-grid to connect; we aggregate each (k, offset) cell to its mean applied slope (x)
+    and mean entropy (y) and draw the lines through those cell means.
+    """
 
     long = per_corpus.melt(
-        id_vars=["k", "offset"],
+        id_vars=["k", "offset", "applied_slope"],
         value_vars=["entropy_empirical", "entropy_theoretical"],
         var_name="kind",
         value_name="entropy_bits",
     )
     long["kind"] = long["kind"].str.replace("entropy_", "", regex=False)
 
+    # Collapse each (k, kind, offset) cell to a single point: mean applied slope on x,
+    # mean entropy on y. This gives every (kind, k) line a shared, ordered x-sequence.
+    cells = long.groupby(["k", "kind", "offset"], as_index=False).agg(
+        applied_slope=("applied_slope", "mean"),
+        entropy_bits=("entropy_bits", "mean"),
+    )
+
     grid = sns.relplot(
-        data=long,
-        x="offset",
+        data=cells,
+        x="applied_slope",
         y="entropy_bits",
         hue="k",
         style="kind",
         kind="line",
         markers=True,
-        errorbar="sd",
+        sort=True,
     )
-    grid.set_axis_labels("Zipfian slope offset", "Sense entropy (bits)")
-    save_fig(grid.figure, figures_dir, "entropy_vs_offset")
+    grid.set_axis_labels("Applied Zipfian slope", "Sense entropy (bits)")
+    save_fig(grid.figure, figures_dir, "entropy_vs_slope")
 
 
 def _plot_n_examples(per_corpus: pd.DataFrame, figures_dir: Path) -> None:
@@ -115,33 +128,89 @@ def _plot_n_examples(per_corpus: pd.DataFrame, figures_dir: Path) -> None:
     save_fig(fig, figures_dir, "n_examples_per_k")
 
 
-def _plot_rank_frequency(per_corpus: pd.DataFrame, data_dir: Path, figures_dir: Path) -> None:
-    """Rank-frequency (Zipf) plot for one representative corpus: empirical vs theory."""
-    # Pick the corpus with the most senses observed as the representative example.
-    top = per_corpus.sort_values("n_senses_observed", ascending=False).iloc[0]
-    corpus = next(
-        c
-        for c in iter_corpora(data_dir)
-        if c.lemma_pos == top["lemma_pos"]
-        and c.k == top["k"]
-        and c.offset == top["offset"]
-    )
+# How many randomly-chosen example corpora the rank-frequency figure shows, and the
+# seed for that choice (fixed so the figure is reproducible across runs).
+_RANK_FREQ_N_EXAMPLES = 6
+_RANK_FREQ_SEED = 0
+
+
+def _draw_rank_frequency(ax, corpus: Corpus, row: pd.Series) -> None:
+    """Draw one corpus's empirical-vs-theoretical rank-frequency curve onto ``ax``."""
     meta = json.loads(corpus.meta_path.read_text(encoding="utf-8"))
     df = pd.read_csv(corpus.csv_path)
 
     emp = (df["sense"].value_counts() / len(df)).sort_values(ascending=False)
     theo = pd.Series(meta["sense_probs"]).sort_values(ascending=False)
 
-    fig, ax = plt.subplots()
     ax.plot(range(1, len(emp) + 1), emp.to_numpy(), "o-", label="empirical")
     ax.plot(range(1, len(theo) + 1), theo.to_numpy(), "s--", label="theoretical")
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlabel("Sense rank")
-    ax.set_ylabel("Probability")
-    ax.set_title(f"{top['lemma_pos']} k{top['k']} offset {top['offset']:+.2f}")
-    ax.legend()
-    save_fig(fig, figures_dir, "rank_frequency_example")
+    ax.set_title(
+        f"{row['lemma_pos']} k{row['k']} "
+        f"slope {row['applied_slope']:.2f} (offset {row['offset']:+.2f})",
+        fontsize="small",
+    )
+
+
+def _stratified_sample(per_corpus: pd.DataFrame, n: int) -> pd.DataFrame:
+    """Sample ``n`` corpora spread roughly evenly across the sense-count ``k`` values.
+
+    A plain random draw is dominated by the most common k, so we split the budget across
+    the distinct k groups (largest groups absorb the remainder) and sample within each,
+    seeded for reproducibility. Returns up to ``n`` rows, sorted by k for a tidy layout.
+    """
+    groups = dict(tuple(per_corpus.groupby("k")))
+    n_groups = len(groups)
+    base, extra = divmod(n, n_groups)
+    # Give the leftover slots to the largest groups so quotas stay satisfiable.
+    by_size = sorted(groups, key=lambda k: len(groups[k]), reverse=True)
+    quota = {k: base + (1 if i < extra else 0) for i, k in enumerate(by_size)}
+
+    parts = [
+        grp.sample(n=min(quota[k], len(grp)), random_state=_RANK_FREQ_SEED)
+        for k, grp in groups.items()
+    ]
+    return pd.concat(parts).sort_values(["k", "lemma_pos", "offset"])
+
+
+def _plot_rank_frequency(per_corpus: pd.DataFrame, data_dir: Path, figures_dir: Path) -> None:
+    """Rank-frequency (Zipf) plots for several randomly-selected corpora: empirical vs theory.
+
+    Draws up to :data:`_RANK_FREQ_N_EXAMPLES` corpora as small multiples so the figure
+    is representative rather than reflecting a single hand-picked corpus. The sample is
+    stratified across the sense-count k (see :func:`_stratified_sample`) and seeded
+    (:data:`_RANK_FREQ_SEED`) for reproducibility.
+    """
+    n = min(_RANK_FREQ_N_EXAMPLES, len(per_corpus))
+    sample = _stratified_sample(per_corpus, n)
+    n = len(sample)  # stratified quotas may yield slightly fewer if a k group is small
+
+    # Index corpora on disk by (lemma_pos, k, offset) so each sampled row finds its file
+    # without re-walking the tree per example.
+    by_key = {(c.lemma_pos, c.k, c.offset): c for c in iter_corpora(data_dir)}
+
+    ncols = min(3, n)
+    nrows = -(-n // ncols)  # ceil division
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4 * ncols, 3 * nrows), squeeze=False)
+    flat = axes.ravel()
+
+    for ax, (_, row) in zip(flat, sample.iterrows()):
+        corpus = by_key[(row["lemma_pos"], row["k"], row["offset"])]
+        _draw_rank_frequency(ax, corpus, row)
+
+    for ax in flat[n:]:  # hide any unused cells in the final row
+        ax.set_visible(False)
+
+    # Shared axis labels and a single legend keep the small multiples uncluttered.
+    fig.supxlabel("Sense rank")
+    fig.supylabel("Probability")
+    fig.tight_layout()
+    # Legend below the grid so it never collides with a panel title.
+    handles, labels = flat[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=len(labels),
+               bbox_to_anchor=(0.5, -0.03))
+    save_fig(fig, figures_dir, "rank_frequency_examples")
 
 
 def analyse_raw_simulated(data_dir: Path, out_root: Path) -> None:
@@ -173,10 +242,14 @@ def analyse_raw_simulated(data_dir: Path, out_root: Path) -> None:
             str(lemma_pos),
         )
 
+    # Group by the offset (the regular design grid); report the mean applied slope in
+    # the cell too, since the applied slope is lemma-specific and so varies within a
+    # cell. Both the offset and the (mean) actual slope are thus available in the table.
     summary = (
         per_corpus.groupby(["k", "offset"], as_index=False)
         .agg(
             n_corpora=("n_examples", "size"),
+            mean_applied_slope=("applied_slope", "mean"),
             mean_n_examples=("n_examples", "mean"),
             mean_entropy_empirical=("entropy_empirical", "mean"),
             mean_entropy_theoretical=("entropy_theoretical", "mean"),
@@ -185,7 +258,7 @@ def analyse_raw_simulated(data_dir: Path, out_root: Path) -> None:
     )
     write_table(summary, tables_dir, "raw_summary")
 
-    _plot_entropy_vs_offset(per_corpus, figures_dir)
+    _plot_entropy_vs_slope(per_corpus, figures_dir)
     _plot_n_examples(per_corpus, figures_dir)
     _plot_rank_frequency(per_corpus, data_dir, figures_dir)
 
