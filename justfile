@@ -17,7 +17,7 @@ create-env:
 # ---- Vocab Creation
 
 create-vocab vocab="most_diverse" n="100":
-    python create_vocabs.py source_data/vocabs {{ vocab }} -n {{ n }}
+    python create_vocabs.py source_data/vocabs {{ vocab }} source_data/word_sense_disambigation_corpora -n {{ n }}
 
 # --- Simulation
 
