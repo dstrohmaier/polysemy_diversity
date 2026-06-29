@@ -16,13 +16,17 @@ To compare the two methods for estimating diversity, we use a simulation study w
 1. the slope of the Zipfian distribution, and 
 2. the support of the Zipfian distribution, i.e. the number of senses.
 
-We estimate the slope from the WSD corpus. 
+We estimate the slope from the WSD corpus. (The estimate of the slope uses all occurrences of the lemma. In other processing steps, we require a minimum of 5 instances for simulation purposes, but the base slope should be naturalistic.)
 
 By using sense-annotated occurrences to create corpora, we can compare the diversity estimates for datasets with known properties.
 
 ### Vocabularies
 
-Our simulation study covers for each PoS the 100 lemmata with most senses in WordNet. In addition, we have a list of 10 target verbs.
+Our simulation study covers for each PoS up to 100 lemmata with at least 3 senses. If there are more than a 100 lemmata with 3+ senses, we select the 100 with most senses in the WSD corpus. For a sense to be considered in the count, we require a minimum of 5 instances. The filter of 5 is also applied later during the simulation. We find the lowest number of eligible lemmata, just 30, for adverbs .
+
+The creation of these vocabs also creates statistic files (markdown format) which provide numbers for every PoS as well as an overview statistics file that describes the senses per lemma, instances per lemma, and instances per sense.
+
+In addition, we have a list of 10 target verbs. However, 3 of these verbs have insufficient senses for being considered present in the source WSD dataset.
 
 ## Requirements
 
