@@ -71,7 +71,7 @@ def simulate(
     seed: int,
 ) -> None:
     """Generate corpora varying in sense count (k) and Zipfian slope from WSD_DIR."""
-    wsd_df = load_wsd([wsd_dir], min_examples=min_examples)
+    wsd_df = load_wsd([wsd_dir])
     target_pairs = _load_targets(targets_fp)
 
     simulate_zipfian_corpora(
@@ -84,6 +84,7 @@ def simulate(
         offset_step,
         n_draws,
         seed,
+        min_examples,
     )
 
     # Convert the freshly generated corpora to WiC-format .data files alongside

@@ -92,7 +92,14 @@ def wsd_generator(data_dir: Path) -> Generator[dict[str, Any], None, None]:
         yield from _finalize_sentence(buffer)
 
 
-def load_wsd(data_dirs: list[Path], min_examples: int = 5) -> pd.DataFrame:
+def load_wsd(data_dirs: list[Path]) -> pd.DataFrame:
+    """Load all annotated WSD occurrences into one frame (no sense filtering).
+
+    Returns every annotated ``(lemma, pos, sense)`` occurrence, including duplicate
+    sentences. The Zipfian baseline slope is fitted from these raw counts; the
+    minimum-examples filter is applied later, in ``simulate_word_corpus``, on the
+    *distinct-sentence* count after deduplication.
+    """
     frames = []
     for data_dir in data_dirs:
         part = pd.DataFrame(
@@ -103,9 +110,5 @@ def load_wsd(data_dirs: list[Path], min_examples: int = 5) -> pd.DataFrame:
         frames.append(part)
 
     df = pd.concat(frames, ignore_index=True)
-
-    counts = df.groupby(["lemma", "pos", "sense"])["sentence"].transform("count")
-    df = df[counts >= min_examples].copy()
-
     df.sort_values(["lemma", "pos", "sense"], ignore_index=True, inplace=True)
     return df
