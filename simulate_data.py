@@ -17,6 +17,7 @@ from pathlib import Path
 
 import click
 
+from data_processing.constants import MIN_EXAMPLES
 from data_processing.loading_wsd import load_wsd
 from data_processing.wic_conversion import convert_simulated_corpora
 from simulation.corpus_simulation import simulate_zipfian_corpora
@@ -53,9 +54,9 @@ def _load_targets(path: Path) -> list[tuple[str, str]]:
 @click.option(
     "--min-examples",
     type=int,
-    default=5,
+    default=MIN_EXAMPLES,
     show_default=True,
-    help="Passed to load_wsd; min examples per (lemma, pos, sense).",
+    help="Min distinct sentences per sense for it to be usable.",
 )
 @click.option("--seed", type=int, default=42, show_default=True)
 def simulate(
