@@ -24,7 +24,7 @@ create-vocab vocab="most_diverse" n="100":
 simulate-target-verbs:
     python simulate_data.py source_data/word_sense_disambigation_corpora source_data/vocabs/target_verbs.json source_data/simulated_data/target_verbs
 
-simulate-most-diverse pos:
+simulate-most-diverse pos $CUDA_VISIBLE_DEVICES="0":
     python simulate_data.py source_data/word_sense_disambigation_corpora source_data/vocabs/most_diverse_{{ pos }}.json source_data/simulated_data/most_diverse_{{ pos }}
 
 simulate-most-diverse-all:
