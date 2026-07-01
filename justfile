@@ -2,7 +2,7 @@
 # recipe that runs project code. A non-existent path entry is silently skipped, so
 # this is harmless during create-env (when ../diversity_env does not exist yet).
 
-export LD_LIBRARY_PATH := "../diversity_env/lib:" + env_var_or_default("LD_LIBRARY_PATH", "")
+export LD_LIBRARY_PATH := "../diversity_env/lib:" + env("LD_LIBRARY_PATH", "")
 
 unit-test:
     python -m unittest discover -s './tests' -p '*_tests.py'
