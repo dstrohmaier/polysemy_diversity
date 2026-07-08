@@ -24,6 +24,12 @@ def load_split_tempowic(data_jl_path: Path, labels_tsv_path: Path) -> Dataset:
                     "sentence1": entry["tweet1"]["text"],
                     "sentence2": entry["tweet2"]["text"],
                     "label": labels[entry["id"]],
+                    # Character spans of the target occurrence in each tweet, used by
+                    # the target-vector WiC model to locate u and v.
+                    "start1": int(entry["tweet1"]["text_start"]),
+                    "end1": int(entry["tweet1"]["text_end"]),
+                    "start2": int(entry["tweet2"]["text_start"]),
+                    "end2": int(entry["tweet2"]["text_end"]),
                 }
             )
     return Dataset.from_list(records)
@@ -80,6 +86,12 @@ def load_split_json_wic(data_json_path: Path, gold_json_path: Path) -> Dataset:
                 "sentence1": data["sentence1"],
                 "sentence2": data["sentence2"],
                 "label": binary_label,
+                # WiC records the target's character span in each sentence as strings;
+                # keep them (as ints) for the target-vector model to locate u and v.
+                "start1": int(data["start1"]),
+                "end1": int(data["end1"]),
+                "start2": int(data["start2"]),
+                "end2": int(data["end2"]),
             }
         )
 

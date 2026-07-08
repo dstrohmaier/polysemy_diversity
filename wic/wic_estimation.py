@@ -16,15 +16,58 @@ import pandas as pd  # type: ignore
 import torch
 from datasets import Dataset  # type: ignore
 from transformers import (
-    AutoModelForSequenceClassification,
     AutoTokenizer,
     Trainer,
     TrainingArguments,
 )
 
-from wic.preprocessing import preprocess_wic
+from wic.preprocessing import preprocess_wic_targets
+from wic.target_vector_model import (
+    HEAD_PARAM_NAMES,
+    WiCTargetDataCollator,
+    load_wic_model,
+)
 
 logger = logging.getLogger("div")
+
+
+def assert_trained_head(model_dir: Path) -> None:
+    """Fail loudly if the checkpoint at ``model_dir`` has no trained classifier head.
+
+    ``AutoModelForSequenceClassification.from_pretrained`` only *warns* when a head is
+    missing from the checkpoint and then initialises it randomly, so a stale or
+    base-model directory scores silently with a nonsense head. We inspect the saved
+    weights directly (rather than the loaded module, whose head is always populated)
+    and require the classifier parameters to be present.
+    """
+    try:
+        from safetensors import safe_open  # type: ignore
+
+        weight_files = sorted(model_dir.glob("*.safetensors"))
+        present: set[str] = set()
+        for wf in weight_files:
+            with safe_open(wf, framework="pt") as f:  # type: ignore
+                present.update(f.keys())
+        if not weight_files:  # fall back to the PyTorch .bin format
+            bin_files = sorted(model_dir.glob("pytorch_model*.bin"))
+            for bf in bin_files:
+                present.update(
+                    torch.load(bf, map_location="cpu", weights_only=True).keys()
+                )
+    except Exception as exc:  # pragma: no cover - defensive
+        raise RuntimeError(
+            f"Could not read model weights under {model_dir} to verify the WiC "
+            f"classifier head: {exc}"
+        ) from exc
+
+    missing = [name for name in HEAD_PARAM_NAMES if name not in present]
+    assert not missing, (
+        f"WiC checkpoint {model_dir} is missing classifier-head weights {missing}; "
+        f"the model was never fine-tuned for WiC (from_pretrained would randomly "
+        f"initialise the head, producing a flat, high P(diff)). Train the model "
+        f"(e.g. `just train-wic-tempowic`) or point --wic-model-dir at a trained "
+        f"checkpoint's `final` directory."
+    )
 
 
 def _predict_logits(entries: list[dict], model, tokenizer) -> np.ndarray:
@@ -35,14 +78,19 @@ def _predict_logits(entries: list[dict], model, tokenizer) -> np.ndarray:
                 "lemma": e["lemma"],
                 "sentence1": e["sentence1"],
                 "sentence2": e["sentence2"],
+                # Target spans, needed by the target-vector model to locate u and v.
+                "start1": e["start1"],
+                "end1": e["end1"],
+                "start2": e["start2"],
+                "end2": e["end2"],
             }
             for e in entries
         ]
     )
     tokenized = dataset.map(
-        lambda x: preprocess_wic(x, tokenizer),
+        lambda x: preprocess_wic_targets(x, tokenizer),
         batched=True,
-        remove_columns=["lemma", "sentence1", "sentence2"],
+        remove_columns=dataset.column_names,
     )
     # Trainer needs a labels column to not crash; add a placeholder.
     tokenized = tokenized.map(
@@ -55,7 +103,12 @@ def _predict_logits(entries: list[dict], model, tokenizer) -> np.ndarray:
         fp16=torch.cuda.is_available(),
         report_to="none",
     )
-    trainer = Trainer(model=model, args=training_args, processing_class=tokenizer)
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        processing_class=tokenizer,
+        data_collator=WiCTargetDataCollator(tokenizer),
+    )
     return trainer.predict(tokenized).predictions  # type: ignore
 
 
@@ -136,8 +189,9 @@ def get_corpora_wic_score(
             / "final"
         )
 
+    assert_trained_head(model_dir)
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
-    model = AutoModelForSequenceClassification.from_pretrained(model_dir)
+    model = load_wic_model(str(model_dir))
 
     summary_rows = []
     pair_rows = []

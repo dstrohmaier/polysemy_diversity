@@ -6,7 +6,6 @@ import numpy as np
 import random
 from transformers import (
     AutoTokenizer,
-    AutoModelForSequenceClassification,
     TrainingArguments,
     Trainer,
 )
@@ -14,13 +13,14 @@ import evaluate  # type: ignore
 
 from data_processing.loading_wic import get_wic_dsd, get_tempowic_dsd
 from utilities.reproducibility import make_reproducible
-from wic.preprocessing import preprocess_wic
+from wic.preprocessing import preprocess_wic_targets
+from wic.target_vector_model import WiCTargetDataCollator, load_wic_model
 
 
 def preprocess_wic_with_labels(examples, tokenizer):
-    # Tokenize, then map the SuperGLUE labels (0 or 1) to the standard "labels"
-    # key expected by Trainer.
-    tokenized = preprocess_wic(examples, tokenizer)
+    # Tokenize with target-word masks, then map the SuperGLUE labels (0 or 1) to the
+    # standard "labels" key expected by Trainer.
+    tokenized = preprocess_wic_targets(examples, tokenizer)
     tokenized["labels"] = examples["label"]
     return tokenized
 
@@ -74,6 +74,7 @@ def train_model(
         train_dataset=tokenized_datasets["train"],
         eval_dataset=tokenized_datasets["validation"],
         processing_class=tokenizer,
+        data_collator=WiCTargetDataCollator(tokenizer),
         compute_metrics=compute_metrics,
     )
 
@@ -118,9 +119,7 @@ def hyperparameter_search(
         with open(trial_dir / "hparams.json", "w") as out_f:
             json.dump(hparams, out_f)
 
-        model = AutoModelForSequenceClassification.from_pretrained(
-            model_name, num_labels=2
-        )
+        model = load_wic_model(model_name)
         f1 = train_model(
             model, tokenized_datasets, tokenizer, trial_dir, hparams, save=False
         )
@@ -149,7 +148,7 @@ def train_final_model(
     model_name: str, tokenized_datasets, tokenizer, output_dir: Path, hparams: dict
 ):
     """Retrain on combined train+dev with the best hparams; overwrites output_dir/final."""
-    model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=2)
+    model = load_wic_model(model_name)
     training_args = TrainingArguments(
         output_dir=str(output_dir),
         learning_rate=hparams["learning_rate"],
@@ -167,6 +166,7 @@ def train_final_model(
         args=training_args,
         train_dataset=tokenized_datasets["train"],
         processing_class=tokenizer,
+        data_collator=WiCTargetDataCollator(tokenizer),
     )
     trainer.train()
     trainer.save_model(str(output_dir / "final"))
@@ -175,7 +175,7 @@ def train_final_model(
 
 def evaluate_final_model(output_dir: Path, tokenized_test_dataset, tokenizer):
     """Evaluate the saved final model on the test split and write test_results.json."""
-    model = AutoModelForSequenceClassification.from_pretrained(output_dir / "final")
+    model = load_wic_model(str(output_dir / "final"))
     eval_args = TrainingArguments(
         output_dir=str(output_dir),
         per_device_eval_batch_size=32,
@@ -185,6 +185,7 @@ def evaluate_final_model(output_dir: Path, tokenized_test_dataset, tokenizer):
         model=model,
         args=eval_args,
         processing_class=tokenizer,
+        data_collator=WiCTargetDataCollator(tokenizer),
         compute_metrics=compute_metrics,
     )
     metrics = trainer.evaluate(eval_dataset=tokenized_test_dataset)
