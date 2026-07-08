@@ -198,6 +198,15 @@ def _draw_corpus_with_all_senses(
     return corpus
 
 
+def _collision_prob(sense_probs: dict[str, float]) -> float:
+    """P(two independent draws from ``sense_probs`` share a sense).
+
+    The Gini-Simpson index sum(p_i**2) over the Zipfian design distribution --
+    the same quantity ``generate_comparison_pairs`` labels 1 (same sense).
+    """
+    return float(sum(p * p for p in sense_probs.values()))
+
+
 def _write_variant(
     word_dir: Path, variant: str, corpus: pd.DataFrame, meta: dict
 ) -> None:
@@ -272,6 +281,7 @@ def simulate_word_corpus(
                 "n_senses_available": len(senses),
                 "sense_probs": sense_probs,
                 "entropy_bits": float(entropy(list(sense_probs.values()), base=2)),
+                "p_diff_theoretical": 1.0 - _collision_prob(sense_probs),
             },
         )
 

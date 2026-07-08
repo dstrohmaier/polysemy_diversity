@@ -33,18 +33,21 @@ def _corpus_row(corpus: Corpus) -> dict | None:
     n_same = sum(1 for p in pairs if p["label"] == 1)
     n_diff = n_pairs - n_same
 
-    # The sense-distribution entropy (theoretical Zipfian design) and the Zipfian
-    # slopes live in the corpus meta sidecar; pull them in so the same-sense rate can be
-    # related to sense diversity, and so plots/tables can report the actual (applied)
-    # slope alongside the nominal offset.
+    # The sense-distribution entropy and theoretical P(diff) (both from the Zipfian
+    # design) and the Zipfian slopes live in the corpus meta sidecar; pull them in so
+    # the same-sense rate can be related to sense diversity and to the design's own
+    # diff-rate target, and so plots/tables can report the actual (applied) slope
+    # alongside the nominal offset.
     entropy_bits = float("nan")
     baseline_slope = float("nan")
     applied_slope = float("nan")
+    p_diff_theoretical = float("nan")
     if corpus.meta_path.exists():
         meta = json.loads(corpus.meta_path.read_text(encoding="utf-8"))
         entropy_bits = float(meta["entropy_bits"])
         baseline_slope = float(meta["baseline_slope"])
         applied_slope = float(meta["applied_slope"])
+        p_diff_theoretical = float(meta["p_diff_theoretical"])
 
     return {
         "lemma_pos": corpus.lemma_pos,
@@ -56,6 +59,8 @@ def _corpus_row(corpus: Corpus) -> dict | None:
         "n_same": n_same,
         "n_diff": n_diff,
         "same_fraction": (n_same / n_pairs) if n_pairs else float("nan"),
+        "diff_fraction": (n_diff / n_pairs) if n_pairs else float("nan"),
+        "p_diff_theoretical": p_diff_theoretical,
         "entropy_bits": entropy_bits,
     }
 
@@ -98,6 +103,26 @@ def _plot_same_fraction(per_corpus: pd.DataFrame, figures_dir: Path) -> None:
     )
     grid.set_axis_labels("Applied Zipfian slope", "Same-sense fraction")
     save_fig(grid.figure, figures_dir, "same_fraction_vs_slope")
+
+
+def _plot_diff_fraction_vs_theoretical(per_corpus: pd.DataFrame, figures_dir: Path) -> None:
+    """Empirical diff-sense fraction against the theoretical design P(diff).
+
+    One point per corpus; points near the diagonal show the sampled pairs matching
+    the Zipfian design's own diff-rate target as closely as a finite draw allows.
+    """
+    grid = sns.relplot(
+        data=per_corpus,
+        x="p_diff_theoretical",
+        y="diff_fraction",
+        hue="k",
+        kind="scatter",
+    )
+    for ax in grid.axes.flat:
+        lo, hi = 0.0, 1.0
+        ax.plot([lo, hi], [lo, hi], color="grey", linestyle="--", linewidth=1)
+    grid.set_axis_labels("Theoretical P(diff)", "Empirical diff-sense fraction")
+    save_fig(grid.figure, figures_dir, "diff_fraction_vs_theoretical")
 
 
 def _plot_same_fraction_vs_entropy(per_corpus: pd.DataFrame, figures_dir: Path) -> None:
@@ -158,6 +183,8 @@ def analyse_wic_simulated(data_dir: Path, out_root: Path) -> None:
             n_same=("n_same", "sum"),
             n_diff=("n_diff", "sum"),
             mean_same_fraction=("same_fraction", "mean"),
+            mean_diff_fraction=("diff_fraction", "mean"),
+            mean_p_diff_theoretical=("p_diff_theoretical", "mean"),
         )
     )
     write_table(summary, tables_dir, "wic_summary")
@@ -165,6 +192,7 @@ def analyse_wic_simulated(data_dir: Path, out_root: Path) -> None:
     _plot_same_vs_diff_counts(per_corpus, figures_dir)
     _plot_same_fraction(per_corpus, figures_dir)
     _plot_same_fraction_vs_entropy(per_corpus, figures_dir)
+    _plot_diff_fraction_vs_theoretical(per_corpus, figures_dir)
 
     logger.info(
         "wic_simulated: %d corpora, %d pairs total (%d same, %d diff)",

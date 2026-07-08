@@ -33,43 +33,52 @@ _ROUND_DP = 4
 _BOOT_KW = dict(n_resamples=1000, vectorized=False, paired=True, method="percentile")
 
 
-def entropy_lookup(sim_dir: Path) -> dict[tuple[str, str, int, float], float]:
-    """Map ``(word, pos, k_senses, offset)`` -> theoretical ``entropy_bits``.
+_META_LOOKUP_FIELDS = ("entropy_bits", "p_diff_theoretical")
 
-    The score CSVs do not carry entropy, so we read it from each corpus's
-    ``.meta.json`` sidecar under ``sim_dir``. The offset key is derived the same way
-    the scorer derives it (``applied_slope - baseline_slope``) and rounded so it joins
-    cleanly to the score rows.
+
+def entropy_lookup(
+    sim_dir: Path,
+) -> dict[tuple[str, str, int, float], dict[str, float]]:
+    """Map ``(word, pos, k_senses, offset)`` -> theoretical design fields.
+
+    The score CSVs do not carry entropy or the theoretical P(diff), so we read them
+    from each corpus's ``.meta.json`` sidecar under ``sim_dir``. The offset key is
+    derived the same way the scorer derives it (``applied_slope - baseline_slope``)
+    and rounded so it joins cleanly to the score rows.
     """
-    lookup: dict[tuple[str, str, int, float], float] = {}
+    lookup: dict[tuple[str, str, int, float], dict[str, float]] = {}
     for corpus in iter_corpora(sim_dir):
         if not corpus.meta_path.exists():
             continue
         meta = json.loads(corpus.meta_path.read_text(encoding="utf-8"))
         offset = round(meta["applied_slope"] - meta["baseline_slope"], _ROUND_DP)
         key = (meta["lemma"], meta["pos"], int(meta["k_senses"]), offset)
-        lookup[key] = float(meta["entropy_bits"])
+        lookup[key] = {field: float(meta[field]) for field in _META_LOOKUP_FIELDS}
     return lookup
 
 
 def merge_entropy(scores: pd.DataFrame, sim_dir: Path) -> pd.DataFrame:
-    """Add an ``entropy_bits`` column to a score frame via :func:`entropy_lookup`."""
+    """Add ``entropy_bits`` / ``p_diff_theoretical`` columns via :func:`entropy_lookup`."""
     lookup = entropy_lookup(sim_dir)
-    keys = zip(
-        scores["word"],
-        scores["pos"],
-        scores["k_senses"].astype(int),
-        scores["offset"].round(_ROUND_DP),
+    keys = list(
+        zip(
+            scores["word"],
+            scores["pos"],
+            scores["k_senses"].astype(int),
+            scores["offset"].round(_ROUND_DP),
+        )
     )
     out = scores.copy()
-    out["entropy_bits"] = [lookup.get(k, np.nan) for k in keys]
-    missing = int(out["entropy_bits"].isna().sum())
-    if missing:
-        logger.warning(
-            "%d/%d score rows had no matching corpus .meta.json (entropy NaN)",
-            missing,
-            len(out),
-        )
+    for field in _META_LOOKUP_FIELDS:
+        out[field] = [lookup.get(k, {}).get(field, np.nan) for k in keys]
+        missing = int(out[field].isna().sum())
+        if missing:
+            logger.warning(
+                "%d/%d score rows had no matching corpus .meta.json (%s NaN)",
+                missing,
+                len(out),
+                field,
+            )
     return out
 
 

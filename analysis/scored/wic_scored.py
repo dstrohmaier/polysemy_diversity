@@ -27,7 +27,7 @@ from analysis.scored.stats import (
 logger = logging.getLogger("div")
 
 SCORE_COL = "wic_p_diff_mean"
-PREDICTORS = ["entropy_bits", "applied_slope"]
+PREDICTORS = ["entropy_bits", "applied_slope", "p_diff_theoretical"]
 
 
 def _performance_row(pairs: pd.DataFrame, **keys) -> dict:
@@ -97,6 +97,25 @@ def _plot_performance_vs_slope(perf: pd.DataFrame, figures_dir: Path) -> None:
         save_fig(fig, figures_dir, f"wic_{value_col.lower()}_vs_slope")
 
 
+def _plot_p_diff_calibration(per_corpus: pd.DataFrame, figures_dir: Path) -> None:
+    """Model P(diff) against the theoretical design P(diff), one point per corpus.
+
+    Points on the diagonal mean the model's mean predicted P(diff) matches the
+    Zipfian design's own diff-rate target exactly.
+    """
+    grid = sns.relplot(
+        data=per_corpus,
+        x="p_diff_theoretical",
+        y=SCORE_COL,
+        hue="k_senses",
+        kind="scatter",
+    )
+    for ax in grid.axes.flat:
+        ax.plot([0, 1], [0, 1], color="grey", linestyle="--", linewidth=1)
+    grid.set_axis_labels("Theoretical P(diff)", "Mean predicted P(diff)")
+    save_fig(grid.figure, figures_dir, "wic_p_diff_calibration")
+
+
 def analyse_wic_scored(scores_dir: Path, sim_dir: Path, out_root: Path) -> None:
     """Analyse WiC scores in ``scores_dir`` against the corpora in ``sim_dir``."""
     tables_dir = out_root / "tables"
@@ -130,6 +149,7 @@ def analyse_wic_scored(scores_dir: Path, sim_dir: Path, out_root: Path) -> None:
     grid = score_grid(per_corpus, SCORE_COL)
     write_table(grid, tables_dir, "wic_p_diff_grid", index=True)
     score_heatmap(grid, figures_dir, "wic_p_diff_heatmap", cbar_label="mean P(diff)")
+    _plot_p_diff_calibration(per_corpus, figures_dir)
 
     # (3) model performance: accuracy + F1 with bootstrap CIs
     pairs = pd.read_csv(pairs_path)
