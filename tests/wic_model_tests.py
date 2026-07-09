@@ -133,10 +133,10 @@ class TargetVectorModelTestCase(unittest.TestCase):
         self.assertIsNotNone(out.loss)
         self.assertEqual(out.loss.ndim, 0)
 
-    def test_feature_dimension_is_4h(self):
-        # The classifier's first Linear must consume a 4*hidden feature.
+    def test_feature_dimension_is_3h(self):
+        # The classifier's first Linear must consume a 3*hidden feature ([u; v; |u-v|]).
         first_linear = self.model.classifier[1]
-        self.assertEqual(first_linear.in_features, 4 * self.hidden)
+        self.assertEqual(first_linear.in_features, 3 * self.hidden)
 
     def test_empty_mask_pools_to_zero(self):
         h = torch.randn(1, 5, self.hidden)

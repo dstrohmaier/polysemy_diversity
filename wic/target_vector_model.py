@@ -1,9 +1,9 @@
-"""Target-vector WiC model: classify sense match from `[u; v; |u−v|; u⊙v]`.
+"""Target-vector WiC model: classify sense match from `[u; v; |u−v|]`.
 
 Instead of the mean-pooled sequence classification the current pipeline uses, this
 model locates the target word in each sentence, extracts its contextual vector — `u`
 (sentence1) and `v` (sentence2) — and feeds the InferSent-style interaction feature
-``[u; v; |u−v|; u⊙v]`` (dimension ``4 * hidden_size``) into a small MLP classifier.
+``[u; v; |u−v|]`` (dimension ``3 * hidden_size``) into a small MLP classifier.
 
 The two target vectors are pooled from a single joined encoding of
 ``"{lemma}: {sentence1}" [SEP] sentence2`` using the ``target_mask_1``/``target_mask_2``
@@ -52,7 +52,7 @@ class TargetVectorConfig(PretrainedConfig):
 
 
 class TargetVectorForWiC(PreTrainedModel):
-    """WiC classifier over the target-vector interaction feature ``[u; v; |u−v|; u⊙v]``."""
+    """WiC classifier over the target-vector interaction feature ``[u; v; |u−v|]``."""
 
     config_class = TargetVectorConfig
 
@@ -78,7 +78,7 @@ class TargetVectorForWiC(PreTrainedModel):
         hidden = self.encoder.config.hidden_size
         self.classifier = nn.Sequential(
             nn.Dropout(config.classifier_dropout),
-            nn.Linear(4 * hidden, hidden),
+            nn.Linear(3 * hidden, hidden),
             nn.GELU(),
             nn.Dropout(config.classifier_dropout),
             nn.Linear(hidden, config.num_labels),
@@ -124,7 +124,7 @@ class TargetVectorForWiC(PreTrainedModel):
 
         u = self._pool_target(hidden_states, target_mask_1)
         v = self._pool_target(hidden_states, target_mask_2)
-        feat = torch.cat([u, v, (u - v).abs(), u * v], dim=-1)  # (B, 4H)
+        feat = torch.cat([u, v, (u - v).abs()], dim=-1)  # (B, 3H)
         logits = self.classifier(feat)  # (B, num_labels)
 
         loss = None
