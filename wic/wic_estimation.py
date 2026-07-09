@@ -65,7 +65,7 @@ def assert_trained_head(model_dir: Path) -> None:
         f"WiC checkpoint {model_dir} is missing classifier-head weights {missing}; "
         f"the model was never fine-tuned for WiC (from_pretrained would randomly "
         f"initialise the head, producing a flat, high P(diff)). Train the model "
-        f"(e.g. `just train-wic-tempowic`) or point --wic-model-dir at a trained "
+        f"(e.g. `just train-wic-fews`) or point --wic-model-dir at a trained "
         f"checkpoint's `final` directory."
     )
 
@@ -184,8 +184,8 @@ def get_corpora_wic_score(
         model_dir = (
             models_root
             / base_model.replace("/", "--")
-            / "wic+tempowic"
-            / "tempowic"
+            / "wic+fews"
+            / "fews"
             / "final"
         )
 

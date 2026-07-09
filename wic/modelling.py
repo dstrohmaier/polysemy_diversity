@@ -11,7 +11,8 @@ from transformers import (
 )
 import evaluate  # type: ignore
 
-from data_processing.loading_wic import get_wic_dsd, get_tempowic_dsd
+from data_processing.loading_wic import get_wic_dsd
+from data_processing.loading_fews import get_fews_wic_dsd
 from utilities.reproducibility import make_reproducible
 from wic.preprocessing import preprocess_wic_targets
 from wic.target_vector_model import WiCTargetDataCollator, load_wic_model
@@ -216,7 +217,7 @@ def run_pipeline(
 
     base_output = output_dir / model_name.replace("/", "--")
     wic_dir = source_dir / "base_dataset"
-    tempowic_dir = source_dir / "tempowic"
+    fews_dir = source_dir / "fews"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     match dataset:
@@ -243,39 +244,39 @@ def run_pipeline(
                 base_output / dataset, wic_final_data["validation"], tokenizer
             )
 
-        case "tempowic":
-            tempowic_search_data = tokenize(get_tempowic_dsd(tempowic_dir), tokenizer)
-            tempowic_final_data = tokenize(
-                get_tempowic_dsd(tempowic_dir, use_test=True), tokenizer
+        case "fews":
+            fews_search_data = tokenize(get_fews_wic_dsd(fews_dir, seed=seed), tokenizer)
+            fews_final_data = tokenize(
+                get_fews_wic_dsd(fews_dir, use_test=True, seed=seed), tokenizer
             )
             best_hparams = hyperparameter_search(
                 model_name,
-                tempowic_search_data,
+                fews_search_data,
                 tokenizer,
                 base_output / dataset / "hp_search",
                 n_trials,
                 rng,
             )
-            print("[Final] Retraining TempoWiC on train+dev with best hparams")
+            print("[Final] Retraining FEWS on train+dev with best hparams")
             train_final_model(
                 model_name,
-                tempowic_final_data,
+                fews_final_data,
                 tokenizer,
                 base_output / dataset / "hp_search",
                 best_hparams,
             )
             evaluate_final_model(
-                base_output / dataset, tempowic_final_data["validation"], tokenizer
+                base_output / dataset, fews_final_data["validation"], tokenizer
             )
 
-        case "wic+tempowic":
-            wic_output = base_output / "wic+tempowic" / "wic"
-            tempowic_output = base_output / "wic+tempowic" / "tempowic"
+        case "wic+fews":
+            wic_output = base_output / "wic+fews" / "wic"
+            fews_output = base_output / "wic+fews" / "fews"
             wic_search_data = tokenize(get_wic_dsd(wic_dir), tokenizer)
             wic_final_data = tokenize(get_wic_dsd(wic_dir, use_test=True), tokenizer)
-            tempowic_search_data = tokenize(get_tempowic_dsd(tempowic_dir), tokenizer)
-            tempowic_final_data = tokenize(
-                get_tempowic_dsd(tempowic_dir, use_test=True), tokenizer
+            fews_search_data = tokenize(get_fews_wic_dsd(fews_dir, seed=seed), tokenizer)
+            fews_final_data = tokenize(
+                get_fews_wic_dsd(fews_dir, use_test=True, seed=seed), tokenizer
             )
 
             print("[HPSearch] Stage 1: WiC hyperparameter search")
@@ -289,24 +290,24 @@ def run_pipeline(
             evaluate_final_model(wic_output, wic_final_data["validation"], tokenizer)
 
             print(
-                "[HPSearch] Stage 2: TempoWiC hyperparameter search (starting from best WiC model)"
+                "[HPSearch] Stage 2: FEWS hyperparameter search (starting from best WiC model)"
             )
-            tempowic_best_hparams = hyperparameter_search(
+            fews_best_hparams = hyperparameter_search(
                 str(wic_output / "final"),
-                tempowic_search_data,
+                fews_search_data,
                 tokenizer,
-                tempowic_output,
+                fews_output,
                 n_trials,
                 rng,
             )
-            print("[Final] Retraining TempoWiC on train+dev with best hparams")
+            print("[Final] Retraining FEWS on train+dev with best hparams")
             train_final_model(
                 str(wic_output / "final"),
-                tempowic_final_data,
+                fews_final_data,
                 tokenizer,
-                tempowic_output,
-                tempowic_best_hparams,
+                fews_output,
+                fews_best_hparams,
             )
             evaluate_final_model(
-                tempowic_output, tempowic_final_data["validation"], tokenizer
+                fews_output, fews_final_data["validation"], tokenizer
             )

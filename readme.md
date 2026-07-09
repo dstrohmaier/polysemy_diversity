@@ -32,9 +32,12 @@ In addition, we have a list of 10 target verbs. However, 3 of these verbs have i
 
 In addition to the libraries specified installed by the create-env recipe (conda + pip) in the justfile, this project requires the [Google WSD corpus](https://research.google/blog/a-large-corpus-for-supervised-word-sense-disambiguation/). These data are available at: github.com/google-research-datasets/word_sense_disambigation_corpora
 
-The WiC data are available in the required format at:
+The primary WiC data are available in the required format at:
 - https://github.com/ameta13/mcl-wic/tree/main/data_dumped_full/wic_train-en-en
-- https://github.com/cardiffnlp/TempoWiC/tree/main/data
+
+In addition, we synthesise a WiC dataset from the FEWS WSD corpus:
+- https://nlp.cs.washington.edu/fews/
+
 
 The project also assumes the presence of a GPU.
 
@@ -47,6 +50,6 @@ The commands required to run the code are provided in the justfile. The order of
 2. create-vocab: Create the vocabularies of the lemmata with most senses (one file per PoS).
 3. simulate-target-verbs: Create a dataset with simulated sense distribution for the list of ten target verbs.
 4. simulate-most-diverse-all: Create datasets with simulated sense distributions for each of the four most-diverse PoS vocabularies.
-5. train-wic-tempowic: Train the WiC model (on WiC + TempoWiC) used for WiC-based scoring.
+5. train-wic-fews: Train the WiC model (on WiC + synthetic FEWS) used for WiC-based scoring.
 6. score-vmf-all: Score all simulation datasets with the vMF method, writing the results to `output/scores/<dataset>`.
 7. score-wic-all: Score all simulation datasets with the WiC method, writing the results to `output/scores/<dataset>`.

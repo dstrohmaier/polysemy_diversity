@@ -13,7 +13,7 @@ from wic.modelling import run_pipeline
 @click.argument("output_dir", type=Path)
 @click.option(
     "--dataset",
-    type=click.Choice(["wic", "tempowic", "wic+tempowic"]),
+    type=click.Choice(["wic", "fews", "wic+fews"]),
     default="wic",
     show_default=True,
 )

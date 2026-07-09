@@ -38,7 +38,7 @@ from wic.wic_estimation import get_corpora_wic_score
     "--wic-model-dir",
     type=Path,
     default=None,
-    help="[wic] Trained WiC model dir. Defaults to the wic+tempowic final model "
+    help="[wic] Trained WiC model dir. Defaults to the wic+fews final model "
     "under output/models for --base-model.",
 )
 @click.option(

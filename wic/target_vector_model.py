@@ -10,7 +10,7 @@ The two target vectors are pooled from a single joined encoding of
 multi-hot masks produced by :func:`wic.preprocessing.preprocess_wic_targets`.
 
 Being a :class:`~transformers.PreTrainedModel` subclass, it round-trips through
-``save_pretrained``/``from_pretrained``, which the ``wic+tempowic`` transfer stage relies
+``save_pretrained``/``from_pretrained``, which the ``wic+fews`` transfer stage relies
 on (a saved ``final/`` dir is reloaded as the stage-2 base).
 """
 

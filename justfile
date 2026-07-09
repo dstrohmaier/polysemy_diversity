@@ -38,11 +38,11 @@ simulate-most-diverse-all:
 train model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
     python create_wic_model.py "{{ model }}" source_data output/models
 
-train-tempowic model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
-    python create_wic_model.py "{{ model }}" source_data output/models --dataset tempowic
+train-fews model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
+    python create_wic_model.py "{{ model }}" source_data output/models --dataset fews
 
-train-wic-tempowic model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
-    python create_wic_model.py "{{ model }}" source_data output/models --dataset wic+tempowic
+train-wic-fews model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
+    python create_wic_model.py "{{ model }}" source_data output/models --dataset wic+fews
 
 predict_efcamdat model="answerdotai/ModernBERT-large" train_dataset="wic" $CUDA_VISIBLE_DEVICES="0":
     #!/usr/bin/env bash
