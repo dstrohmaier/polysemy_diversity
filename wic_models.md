@@ -9,11 +9,16 @@ This document further specifies the WiC model.
 | Backbone       | `answerdotai/ModernBERT-large` |
 | Input format   | `lemma: sent1 sent2`           |
 | Pooling format | `[u; v; \|u-v\|]`              |
+| Token wrapping | `[unused0] target [unused1]`   |
 
 ### Pooling Format
 
 [Conneau et al. (2017)](https://aclanthology.org/D17-1070.pdf) used the pooling format `[u; v; |u−v|; u⊙v]`. For their architecture (SentenceBERT), [Reimers & Gurevych (2019)](https://aclanthology.org/D19-1410.pdf) found that `u⊙v` reduced performance, so we dropped it.
 
+
+### Token Wrapping
+
+We wrap the target tokens in both sentences in boundary markers. These markers are available in the modernBERT vocabulary but unused, so we train our own special tokens.
 
 ## Dataset
 
