@@ -132,6 +132,20 @@ class GetFewsWicDsdTestCase(unittest.TestCase):
             with_test = get_fews_wic_dsd(root, use_test=True, seed=1, val_fraction=0.34)
             self.assertGreater(len(with_test["train"]), len(base["train"]))
 
+    def test_use_test_validation_is_a_true_holdout(self):
+        # The use_test=True eval split must be lemma-disjoint from its own train split
+        # AND from everything the hp search (use_test=False) ever saw.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self._write_fews(root)
+            base = get_fews_wic_dsd(root, seed=1, val_fraction=0.34)
+            with_test = get_fews_wic_dsd(root, use_test=True, seed=1, val_fraction=0.34)
+            test_lemmas = set(with_test["validation"]["lemma"])
+            self.assertTrue(test_lemmas)
+            self.assertTrue(test_lemmas.isdisjoint(set(with_test["train"]["lemma"])))
+            self.assertTrue(test_lemmas.isdisjoint(set(base["train"]["lemma"])))
+            self.assertTrue(test_lemmas.isdisjoint(set(base["validation"]["lemma"])))
+
 
 if __name__ == "__main__":
     unittest.main()

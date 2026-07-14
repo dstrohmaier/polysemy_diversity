@@ -169,20 +169,25 @@ def build_balanced_pairs(
 
 
 def _split_pairs_by_lemma(
-    pairs: list[dict], rng: random.Random, val_fraction: float
-) -> tuple[list[dict], list[dict]]:
-    """Partition ``pairs`` into (train, validation), disjoint by lemma.
+    pairs: list[dict], rng: random.Random, val_fraction: float, test_fraction: float
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Partition ``pairs`` into (train, validation, test), disjoint by lemma.
 
     Splitting by lemma (not by row) keeps a word entirely on one side, so the
-    validation set measures generalisation to unseen words rather than memorised ones.
+    held-out sets measure generalisation to unseen words rather than memorised ones.
     """
     lemmas = sorted({p["lemma"] for p in pairs})
     rng.shuffle(lemmas)
     n_val = max(1, int(len(lemmas) * val_fraction)) if lemmas else 0
+    n_test = max(1, int(len(lemmas) * test_fraction)) if lemmas else 0
     val_lemmas = set(lemmas[:n_val])
-    train_pairs = [p for p in pairs if p["lemma"] not in val_lemmas]
+    test_lemmas = set(lemmas[n_val : n_val + n_test])
+    train_pairs = [
+        p for p in pairs if p["lemma"] not in val_lemmas and p["lemma"] not in test_lemmas
+    ]
     val_pairs = [p for p in pairs if p["lemma"] in val_lemmas]
-    return train_pairs, val_pairs
+    test_pairs = [p for p in pairs if p["lemma"] in test_lemmas]
+    return train_pairs, val_pairs, test_pairs
 
 
 def get_fews_wic_dsd(
@@ -191,27 +196,33 @@ def get_fews_wic_dsd(
     seed: int = 1848,
     cap_per_word: int = 4,
     val_fraction: float = 0.1,
+    test_fraction: float = 0.1,
 ) -> DatasetDict:
     """Build a balanced synthetic-WiC ``DatasetDict`` from the FEWS corpus.
 
     Pairs are synthesised from ``train/train.txt`` (the FEWS dev/test splits are too
     low-shot to yield same-sense pairs, so they are not used) and partitioned into
-    ``train``/``validation`` **disjoint by lemma**. Mirrors
-    :func:`data_processing.loading_wic.get_wic_dsd`: with ``use_test=True`` the held-out
-    validation pairs are folded back into ``train`` (so the final model trains on
-    everything) and ``validation`` reuses them for the reported metric. Returns the
-    8-field WiC schema, balanced 50/50 within each partition's construction.
+    ``train``/``validation``/``test``, all **disjoint by lemma**. Mirrors
+    :func:`data_processing.loading_wic.get_wic_dsd`: with ``use_test=False`` the
+    returned ``validation`` is the validation partition (the test partition is held out
+    entirely); with ``use_test=True`` the validation pairs are folded into ``train`` and
+    ``validation`` is the never-trained-on test partition, so the reported metric is a
+    genuine holdout. The same ``seed`` must be used for both calls so the partitions
+    line up. Returns the 8-field WiC schema, balanced 50/50 overall by construction.
     """
     rng = random.Random(seed)
 
     train_occ = load_fews_occurrences([dataset_dir / "train" / "train.txt"])
     pairs = build_balanced_pairs(train_occ, rng, cap_per_word)
-    train_pairs, val_pairs = _split_pairs_by_lemma(pairs, rng, val_fraction)
+    train_pairs, val_pairs, test_pairs = _split_pairs_by_lemma(
+        pairs, rng, val_fraction, test_fraction
+    )
 
     train_ds = Dataset.from_list(train_pairs)
     val_ds = Dataset.from_list(val_pairs)
 
     if use_test:
         train_ds = concatenate_datasets([train_ds, val_ds])
+        val_ds = Dataset.from_list(test_pairs)
 
     return DatasetDict({"train": train_ds, "validation": val_ds})
