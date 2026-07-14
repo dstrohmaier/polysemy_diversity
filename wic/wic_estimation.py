@@ -70,7 +70,30 @@ def assert_trained_head(model_dir: Path) -> None:
     )
 
 
-def _predict_logits(entries: list[dict], model, tokenizer) -> np.ndarray:
+def _build_predict_trainer(model, tokenizer) -> Trainer:
+    """Build the one `Trainer` reused across all corpora for prediction.
+
+    A fresh `Trainer` re-wraps `model` via its `Accelerator` (adding hooks around the
+    existing forward) without undoing the previous wrapping. Building it once per
+    `get_corpora_wic_score` run rather than once per corpus keeps the wrapper depth
+    constant instead of growing with every corpus and eventually hitting a
+    RecursionError deep inside the encoder's forward.
+    """
+    training_args = TrainingArguments(
+        output_dir="_tmp_wic_predict",
+        per_device_eval_batch_size=64,
+        fp16=torch.cuda.is_available(),
+        report_to="none",
+    )
+    return Trainer(
+        model=model,
+        args=training_args,
+        processing_class=tokenizer,
+        data_collator=WiCTargetDataCollator(tokenizer),
+    )
+
+
+def _predict_logits(entries: list[dict], trainer: Trainer, tokenizer) -> np.ndarray:
     """Return the model's raw logits (n_pairs, 2) for a corpus's sentence pairs."""
     dataset = Dataset.from_list(
         [
@@ -97,23 +120,11 @@ def _predict_logits(entries: list[dict], model, tokenizer) -> np.ndarray:
         lambda x: {"labels": [0] * len(x["input_ids"])}, batched=True
     )
 
-    training_args = TrainingArguments(
-        output_dir="_tmp_wic_predict",
-        per_device_eval_batch_size=64,
-        fp16=torch.cuda.is_available(),
-        report_to="none",
-    )
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        processing_class=tokenizer,
-        data_collator=WiCTargetDataCollator(tokenizer),
-    )
     return trainer.predict(tokenized).predictions  # type: ignore
 
 
 def score_corpus_wic(
-    entries: list[dict], model, tokenizer, meta: dict
+    entries: list[dict], trainer: Trainer, tokenizer, meta: dict
 ) -> tuple[dict, list[dict]]:
     """Score one corpus's sentence pairs with the WiC model.
 
@@ -126,7 +137,7 @@ def score_corpus_wic(
     pos = entries[0]["pos"]
     offset = meta["applied_slope"] - meta["baseline_slope"]
 
-    logits = _predict_logits(entries, model, tokenizer)
+    logits = _predict_logits(entries, trainer, tokenizer)
     exp = np.exp(logits - logits.max(axis=1, keepdims=True))
     probs = exp / exp.sum(axis=1, keepdims=True)
     p_diff = probs[:, 0]
@@ -192,6 +203,7 @@ def get_corpora_wic_score(
     assert_trained_head(model_dir)
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
     model = load_wic_model(str(model_dir))
+    trainer = _build_predict_trainer(model, tokenizer)
 
     summary_rows = []
     pair_rows = []
@@ -213,7 +225,7 @@ def get_corpora_wic_score(
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         entries = json.loads(data_path.read_text(encoding="utf-8"))
 
-        summary, corpus_pairs = score_corpus_wic(entries, model, tokenizer, meta)
+        summary, corpus_pairs = score_corpus_wic(entries, trainer, tokenizer, meta)
 
         summary_rows.append(summary)
         pair_rows.extend(corpus_pairs)

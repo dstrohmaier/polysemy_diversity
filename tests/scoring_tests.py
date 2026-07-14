@@ -108,8 +108,8 @@ class WiCScoringTestCase(unittest.TestCase):
         with mock.patch(
             "wic.wic_estimation._predict_logits", return_value=np.asarray(logits)
         ):
-            # model/tokenizer are unused once _predict_logits is patched.
-            return score_corpus_wic(entries, model=None, tokenizer=None, meta=_META)
+            # trainer/tokenizer are unused once _predict_logits is patched.
+            return score_corpus_wic(entries, trainer=None, tokenizer=None, meta=_META)
 
     def test_p_diff_is_class_zero_softmax(self):
         # Logits favouring class 0 -> high p_diff; favouring class 1 -> low.
@@ -162,7 +162,7 @@ class WiCScoringTestCase(unittest.TestCase):
 
     def test_empty_entries_rejected(self):
         with self.assertRaises(AssertionError):
-            score_corpus_wic([], model=None, tokenizer=None, meta=_META)
+            score_corpus_wic([], trainer=None, tokenizer=None, meta=_META)
 
 
 if __name__ == "__main__":
