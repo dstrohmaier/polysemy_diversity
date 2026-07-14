@@ -4,6 +4,10 @@
 
 export LD_LIBRARY_PATH := "../diversity_env/lib:" + env("LD_LIBRARY_PATH", "")
 
+# GPU used by every recipe that touches jax/cupy/torch. Override per invocation with
+# `just gpu=0 <recipe> ...` rather than editing recipes one by one.
+gpu := "2"
+
 unit-test:
     python -m unittest discover -s './tests' -p '*_tests.py'
 
@@ -24,7 +28,7 @@ create-vocab vocab="most_diverse" n="100":
 simulate-target-verbs:
     python simulate_data.py source_data/word_sense_disambigation_corpora source_data/vocabs/target_verbs.json source_data/simulated_data/target_verbs
 
-simulate-most-diverse pos $CUDA_VISIBLE_DEVICES="0":
+simulate-most-diverse pos $CUDA_VISIBLE_DEVICES=gpu:
     python simulate_data.py source_data/word_sense_disambigation_corpora source_data/vocabs/most_diverse_{{ pos }}.json source_data/simulated_data/most_diverse_{{ pos }}
 
 simulate-most-diverse-all:
@@ -35,16 +39,16 @@ simulate-most-diverse-all:
 
 # --- Training WiC
 
-train model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
+train model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES=gpu:
     python create_wic_model.py "{{ model }}" source_data output/models
 
-train-fews model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
+train-fews model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES=gpu:
     python create_wic_model.py "{{ model }}" source_data output/models --dataset fews
 
-train-wic-fews model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
+train-wic-fews model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES=gpu:
     python create_wic_model.py "{{ model }}" source_data output/models --dataset wic+fews
 
-predict_efcamdat model="answerdotai/ModernBERT-large" train_dataset="wic" $CUDA_VISIBLE_DEVICES="0":
+predict_efcamdat model="answerdotai/ModernBERT-large" train_dataset="wic" $CUDA_VISIBLE_DEVICES=gpu:
     #!/usr/bin/env bash
     # Training stores the model name slash-replaced (model_name.replace("/", "--")).
     model_path="{{ model }}"
@@ -53,7 +57,7 @@ predict_efcamdat model="answerdotai/ModernBERT-large" train_dataset="wic" $CUDA_
 
 # --- Scoring
 
-score-wic sim_dir output_dir model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
+score-wic sim_dir output_dir model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES=gpu:
     python score_data.py wic {{ sim_dir }} {{ output_dir }} --base-model "{{ model }}"
 
 score-wic-all:
@@ -63,7 +67,7 @@ score-wic-all:
         just score-wic "$sim_dir" "output/scores/$name"
     done
 
-score-vmf sim_dir output_dir model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES="0":
+score-vmf sim_dir output_dir model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES=gpu:
     python score_data.py vmf {{ sim_dir }} {{ output_dir }} --hf-model-name "{{ model }}"
 
 score-vmf-all:
