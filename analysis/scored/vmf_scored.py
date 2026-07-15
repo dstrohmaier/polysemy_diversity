@@ -2,41 +2,27 @@
 
 Relates the fitted vMF concentration (``vmf_kappa``) to each corpus's known
 ground-truth properties: how strongly kappa tracks sense entropy and Zipfian slope
-(conditional on the sense count k), and how kappa varies over the (slope, k) design
-grid.
+(conditional on the sense count k), with per-corpus dot plots against both
+properties and a (slope, k) grid table.
 """
 
 import logging
 from pathlib import Path
 
 import pandas as pd  # type: ignore
-import seaborn as sns  # type: ignore
 
-from analysis.io import save_fig, write_csv, write_table
+from analysis.io import write_csv, write_table
 from analysis.scored.stats import (
     correlation_table,
     merge_entropy,
     score_grid,
-    score_heatmap,
+    score_scatter,
 )
 
 logger = logging.getLogger("div")
 
 SCORE_COL = "vmf_kappa"
 PREDICTORS = ["entropy_bits", "applied_slope"]
-
-
-def _plot_kappa_vs_entropy(per_corpus: pd.DataFrame, figures_dir: Path) -> None:
-    """vMF kappa against sense entropy, one point per corpus, hued by k."""
-    grid = sns.relplot(
-        data=per_corpus,
-        x="entropy_bits",
-        y=SCORE_COL,
-        hue="k_senses",
-        kind="scatter",
-    )
-    grid.set_axis_labels("Sense entropy (bits)", "vMF concentration (kappa)")
-    save_fig(grid.figure, figures_dir, "vmf_kappa_vs_entropy")
 
 
 def analyse_vmf_scored(scores_dir: Path, sim_dir: Path, out_root: Path) -> None:
@@ -68,9 +54,12 @@ def analyse_vmf_scored(scores_dir: Path, sim_dir: Path, out_root: Path) -> None:
 
     grid = score_grid(per_corpus, SCORE_COL)
     write_table(grid, tables_dir, "vmf_kappa_grid", index=True)
-    score_heatmap(grid, figures_dir, "vmf_kappa_heatmap", cbar_label="vMF kappa")
-
-    _plot_kappa_vs_entropy(per_corpus, figures_dir)
+    score_scatter(per_corpus, "applied_slope", "Applied Zipfian slope",
+                  SCORE_COL, "vMF concentration (kappa)", figures_dir,
+                  "vmf_kappa_vs_slope")
+    score_scatter(per_corpus, "entropy_bits", "Sense entropy (bits)",
+                  SCORE_COL, "vMF concentration (kappa)", figures_dir,
+                  "vmf_kappa_vs_entropy")
 
     logger.info(
         "vmf_scored: analysed %d scored corpora across %d sense counts",

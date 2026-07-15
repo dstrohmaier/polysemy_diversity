@@ -4,8 +4,8 @@ Both scored modes (vMF, WiC) relate a per-corpus score to the corpus's known
 ground-truth properties (sense entropy, Zipfian slope) and summarise scores over the
 (slope, k) design grid. This module holds the pieces they share: the entropy lookup
 that joins score rows back to the corpus metadata, Spearman correlations and metric
-estimates with bootstrap confidence intervals, and the score-grid pivot used for both
-the heatmap figure and its companion table.
+estimates with bootstrap confidence intervals, the score-grid pivot behind the grid
+tables, and the per-corpus score scatter drawn against each design property.
 """
 
 import json
@@ -15,7 +15,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd  # type: ignore
-import matplotlib.pyplot as plt
 import seaborn as sns  # type: ignore
 from scipy.stats import bootstrap, spearmanr  # type: ignore
 
@@ -179,11 +178,39 @@ def score_grid(df: pd.DataFrame, score_col: str) -> pd.DataFrame:
     )
 
 
-def score_heatmap(grid: pd.DataFrame, figures_dir: Path, name: str, cbar_label: str) -> None:
-    """Render a :func:`score_grid` pivot as a heatmap PDF."""
+def k_palette(df: pd.DataFrame) -> dict[int, tuple]:
+    """Fixed colour per sense count k (ascending), shared across the scored figures.
 
-    fig, ax = plt.subplots()
-    sns.heatmap(grid, annot=True, fmt=".2f", cbar_kws={"label": cbar_label}, ax=ax)
-    ax.set_xlabel("Applied Zipfian slope")
-    ax.set_ylabel("Number of senses (k)")
-    save_fig(fig, figures_dir, name)
+    A dict palette forces seaborn's discrete hue mapping (a bare numeric hue column
+    gets a continuous colormap) and pins each k to one colour in every figure. The
+    ``colorblind`` palette passes CVD-separation checks for the small k grids used
+    here.
+    """
+    ks = sorted(df["k_senses"].unique())
+    return dict(zip(ks, sns.color_palette("colorblind", len(ks))))
+
+
+def score_scatter(
+    df: pd.DataFrame,
+    x_col: str,
+    x_label: str,
+    score_col: str,
+    score_label: str,
+    figures_dir: Path,
+    name: str,
+) -> None:
+    """One dot per corpus: ``score_col`` against a design property, hued by k.
+
+    Both design properties (applied slope, sense entropy) are lemma-specific, so
+    per-corpus dots show the within-cell spread that a (slope, k) grid mean hides.
+    """
+    grid = sns.relplot(
+        data=df,
+        x=x_col,
+        y=score_col,
+        hue="k_senses",
+        palette=k_palette(df),
+        kind="scatter",
+    )
+    grid.set_axis_labels(x_label, score_label)
+    save_fig(grid.figure, figures_dir, name)

@@ -7,9 +7,10 @@ ANALYSIS_TYPE selects what to analyse:
 * ``wic_simulated``  -- the WiC-converted ``.data`` pairs (same- vs different-sense
   pair counts and overall data size).
 * ``vmf_scored``     -- vMF scoring output: kappa vs entropy/slope (conditional on k),
-  a (slope, k) score grid, and a heatmap.
-* ``wic_scored``     -- WiC scoring output: P(diff) vs entropy/slope, a score grid, and
-  accuracy + F1 of the WiC model with bootstrap CIs.
+  a (slope, k) score grid table, and per-corpus dot plots against both properties.
+* ``wic_scored``     -- WiC scoring output: P(diff) vs entropy/slope (grid table +
+  per-corpus dot plots), a calibration plot with a pooled OLS fit, and accuracy + F1
+  of the WiC model with bootstrap CIs against slope and entropy.
 
 The descriptive modes take ``DATA_DIR OUTPUT_DIR`` (DATA_DIR = a simulated_data
 dataset dir). The scored modes take ``SCORES_DIR OUTPUT_DIR SIM_DIR``: SCORES_DIR is
