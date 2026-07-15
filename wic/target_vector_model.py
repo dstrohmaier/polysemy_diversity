@@ -1,9 +1,9 @@
 """Target-vector WiC model: classify sense match from `[u; v; |u−v|]`.
 
-Instead of the mean-pooled sequence classification the current pipeline uses, this
-model locates the target word in each sentence, extracts its contextual vector — `u`
-(sentence1) and `v` (sentence2) — and feeds the InferSent-style interaction feature
-``[u; v; |u−v|]`` (dimension ``3 * hidden_size``) into a small MLP classifier.
+The model the training and scoring pipelines use. Rather than mean-pooling the whole
+sequence, it locates the target word in each sentence, extracts its contextual vector
+— `u` (sentence1) and `v` (sentence2) — and feeds the InferSent-style interaction
+feature ``[u; v; |u−v|]`` (dimension ``3 * hidden_size``) into a small MLP classifier.
 
 The two target vectors are pooled from a single joined encoding of
 ``"{lemma}: {sentence1}" [SEP] sentence2`` using the ``target_mask_1``/``target_mask_2``
