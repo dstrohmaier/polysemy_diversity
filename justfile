@@ -119,6 +119,14 @@ analyse-wic-scored-all:
         just analyse-wic-scored "output/scores/$name" "$sim_dir" "output/analysis/$name"
     done
 
+# Globs on the output side (not simulated_data) so results of datasets whose sim
+# dirs have since been removed are cleaned up too.
+clean-vmf-scored-all:
+    rm -rf output/analysis/*/vmf_scored
+
+clean-wic-scored-all:
+    rm -rf output/analysis/*/wic_scored
+
 # --- Data Transfer
 
 push2flamingo:
