@@ -23,7 +23,7 @@ Both sentences are encoded together in one pass. Importantly, the model locates 
 
 ### Token Wrapping
 
-We wrap the target tokens in both sentences in boundary markers. These markers are available in the modernBERT vocabulary but unused, so we train our own special tokens.
+We wrap the target tokens in both sentences in boundary markers. These marker tokens are available in the modernBERT vocabulary but unused. Effectively, we train our own special tokens.
 
 ### Truncation Fall-back
 
