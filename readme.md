@@ -6,15 +6,12 @@ The goal of this repository is to estimate the diversity of usages per word in a
 
 The two methods are:
 
-1. vMF-based: We fit and use a von Mises-Fisher (vMF) distribution to estimate diversity, specifically the we use the inverse of the $\kappa$ parameter as a prediction: $1 / \kappa$
+1. vMF-based: We fit and use a von Mises-Fisher (vMF) distribution to estimate diversity.
 2. WiC-based: We are applying a transformer model trained on the word-in-context (WiC) task to distinguish whether words share a sense.
 
 ### vMF Method
 
-We explore two variations for the vMF-based score, both use the inverse of $\kappa$ but they differ in how they 
-
-1. Inverse of $\kappa$ estimate from 
-2. 
+TO BE SPECIFIED
 
 ### WiC Method
 
@@ -24,7 +21,9 @@ To create WiC-based diversity scores, we sample pairs of occurrences from the co
 
 ## Evaluation: Polysemy-Based Simulation Study
 
-To compare the two methods for estimating diversity, we use a simulation study with known ground-truth: We create artificial datasets where we know the correct senses by sampling from a WSD corpus. To make the datasets realistic, we start from a Zipfian distribution and vary two parameters:
+To compare the two methods for estimating diversity, we use a simulation study with known ground-truth: We create artificial datasets where we know the correct senses by sampling from a WSD corpus. The approach is similar to that by [Schlechtweg & Walde (2020)](https://arxiv.org/abs/2001.03216).
+
+To make the datasets realistic, we start from a Zipfian distribution and vary two parameters:
 
 1. **Evenness**: the slope of the Zipfian distribution (eveness of sense distribution), and
 2. **Richness**: the support of the Zipfian distribution, i.e. richness as the the number of distinct senses.
@@ -48,7 +47,7 @@ $${}^{q}D = \left( \sum_{i=1}^{R} p_i^{q} \right)^{1/(1-q)}$$
 | q     | Name              | Value it reduces to                              | How it weights categories                             |
 |-------|-------------------|--------------------------------------------------|-------------------------------------------------------|
 | **0** | Richness          | $R$                                              | All present categories count equally                  |
-| **1** | Shannon diversity | $\exp\!\left(-\sum_{i=1}^{R} p_i \ln p_i\right)$ | Each category weighted in proportion to its abundance |
+| **1** | Shannon diversity | $\exp\left(-\sum_{i=1}^{R} p_i \ln p_i\right)$ | Each category weighted in proportion to its abundance |
 | **2** | Simpson diversity | $1 / \sum_{i=1}^{R} p_i^{2}$                     | Weighted toward the most abundant categories          |
 
 We will score for all three standard q values. Consequently, for each of the simulated datasets (lemmata) we will have three values with which we can correlate the scores. We use Spearman's Rank Correlation (SRC) for these.
@@ -58,7 +57,7 @@ Evenness could be operationalised as ${}^{1}D/{}^{0}D$ but we stick with the thr
 
 #### Relation to the WiC-based Scoring
 
-Let `p(diff)` be the probability that a random pair of usages for a word type differ in their sense as assigned by a WiC model. Assuming a perfect WiC model, the `p(diff)` is equivalent to the common formulation of Gini's diversity index: $1- \sum_i p^2_i$, where $p^2_i$ is the probability that two draws fall into category $i$. This index is dominatd by frequent senses and, therefore, provides a measure of the dominance of the most frequent sense. As can be seen, Gini's diversity index is closely related Simpson diversity, i.e. the the diversity score with $q=0$
+Let `p(diff)` be the probability that a random pair of usages for a word type differ in their sense as assigned by a WiC model. Assuming a perfect WiC model, the `p(diff)` is equivalent to the common formulation of Gini's diversity index: $1- \sum_i p^2_i$, where $p^2_i$ is the probability that two draws fall into category $i$. This index is dominatd by frequent senses and, therefore, provides a measure of the dominance of the most frequent sense. As can be seen, Gini's diversity index is closely related Simpson diversity, i.e. the diversity score with $q=2$
 
 
 ### Vocabularies
@@ -70,7 +69,9 @@ The creation of these vocabs also creates statistic files (markdown format) whic
 In addition, we have a list of 10 target verbs. However, 3 of these verbs have insufficient senses for being considered present in the source WSD dataset.
 
 
-## Evaluation:
+## Evaluation: Diachronic Data Study
+
+Decision open, plausible candidates include DWUG EN.
 
 
 ## Requirements
@@ -110,6 +111,7 @@ The commands required to run the code are provided in the justfile. The order of
 - Schlechtweg, Cassotti, Noble, Alfter, Schulte im Walde, & Tahmasebi (2024). [More DWUGs: Extending and Evaluating Word Usage Graph Datasets in Multiple Languages](https://doi.org/10.18653/v1/2024.emnlp-main.796). *EMNLP 2024*, 14379–14393.
 - Schlechtweg, McGillivray, Hengchen, Dubossarsky, & Tahmasebi (2020). [SemEval-2020 Task 1: Unsupervised Lexical Semantic Change Detection](https://doi.org/10.18653/v1/2020.semeval-1.1). *SemEval 2020*, 1–23.
 - Schlechtweg, Schulte im Walde, & Eckmann (2018). [Diachronic Usage Relatedness (DURel): A Framework for the Annotation of Lexical Semantic Change](https://doi.org/10.18653/v1/N18-2027). *NAACL-HLT 2018*, 169–174.
+- Schlechtweg & Schulte im Walde (2020). [Simulating Lexical Semantic Change from Sense-Annotated Data](https://doi.org/10.48550/arXiv.2001.03216). *arXiv:2001.03216*.
 - Schlechtweg, Tahmasebi, Hengchen, Dubossarsky, & McGillivray (2021). [DWUG: A Large Resource of Diachronic Word Usage Graphs in Four Languages](https://doi.org/10.18653/v1/2021.emnlp-main.567). *EMNLP 2021*, 7079–7091.
 
 ### NLP WiC
@@ -119,7 +121,12 @@ The commands required to run the code are provided in the justfile. The order of
 
 ### vMF
 
+- Banerjee, Dhillon, Ghosh, & Sra (2005). [Clustering on the Unit Hypersphere using von Mises-Fisher Distributions](https://jmlr.org/papers/v6/banerjee05a.html). *JMLR*, 6(46), 1345–1382.
 - Nagata, Takamura, Otani, & Kawasaki (2023). [Variance Matters: Detecting Semantic Differences without Corpus/Word Alignment](https://doi.org/10.18653/v1/2023.emnlp-main.965). *EMNLP 2023*, 15609–15622.
+
+### Embeddings and Models
+
+- Ethayarajh (2019). [How Contextual are Contextualized Word Representations? Comparing the Geometry of BERT, ELMo, and GPT-2 Embeddings](https://doi.org/10.18653/v1/D19-1006). *EMNLP-IJCNLP 2019*, 55–65.
 
 ### Other Datasets
 
