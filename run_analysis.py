@@ -11,6 +11,9 @@ ANALYSIS_TYPE selects what to analyse:
 * ``wic_scored``     -- WiC scoring output: P(diff) vs entropy/slope (grid table +
   per-corpus dot plots), a calibration plot with a pooled OLS fit, and accuracy + F1
   of the WiC model with bootstrap CIs against slope and entropy.
+* ``comparative``    -- vMF vs WiC compared: Spearman rho of each method's score
+  against entropy/slope (conditional on k), plus WiC's empirical-vs-theoretical rho
+  gap (its calibration "performance penalty"), as a table and dot-plot figures.
 
 The descriptive modes take ``DATA_DIR OUTPUT_DIR`` (DATA_DIR = a simulated_data
 dataset dir). The scored modes take ``SCORES_DIR OUTPUT_DIR SIM_DIR``: SCORES_DIR is
@@ -33,6 +36,7 @@ from pathlib import Path  # noqa: E402
 
 import click  # noqa: E402
 
+from analysis.scored.comparative import analyse_comparative  # noqa: E402
 from analysis.scored.vmf_scored import analyse_vmf_scored  # noqa: E402
 from analysis.scored.wic_scored import analyse_wic_scored  # noqa: E402
 from analysis.simulated_data.raw_simulated import analyse_raw_simulated  # noqa: E402
@@ -44,7 +48,7 @@ from utilities.logging_utils import start_logging  # noqa: E402
 @click.argument(
     "analysis_type",
     type=click.Choice(
-        ["raw_simulated", "wic_simulated", "vmf_scored", "wic_scored"]
+        ["raw_simulated", "wic_simulated", "vmf_scored", "wic_scored", "comparative"]
     ),
 )
 @click.argument("data_dir", type=Path)
@@ -71,17 +75,17 @@ def main(
             analyse_raw_simulated(data_dir, out_root)
         case "wic_simulated":
             analyse_wic_simulated(data_dir, out_root)
-        case "vmf_scored" | "wic_scored":
+        case "vmf_scored" | "wic_scored" | "comparative":
             if sim_dir is None:
                 raise click.UsageError(
                     f"{analysis_type} requires SIM_DIR (the simulated_data dir "
                     "holding corpus .meta.json sidecars)."
                 )
-            analyse = (
-                analyse_vmf_scored
-                if analysis_type == "vmf_scored"
-                else analyse_wic_scored
-            )
+            analyse = {
+                "vmf_scored": analyse_vmf_scored,
+                "wic_scored": analyse_wic_scored,
+                "comparative": analyse_comparative,
+            }[analysis_type]
             analyse(data_dir, sim_dir, out_root)
 
 

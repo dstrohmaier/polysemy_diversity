@@ -119,6 +119,16 @@ analyse-wic-scored-all:
         just analyse-wic-scored "output/scores/$name" "$sim_dir" "output/analysis/$name"
     done
 
+analyse-comparative scores_dir sim_dir output_dir:
+    python run_analysis.py comparative {{ scores_dir }} {{ output_dir }} {{ sim_dir }}
+
+analyse-comparative-all:
+    #!/usr/bin/env bash
+    for sim_dir in source_data/simulated_data/*/; do
+        name=$(basename "$sim_dir")
+        just analyse-comparative "output/scores/$name" "$sim_dir" "output/analysis/$name"
+    done
+
 # Globs on the output side (not simulated_data) so results of datasets whose sim
 # dirs have since been removed are cleaned up too.
 clean-vmf-scored-all:
@@ -126,6 +136,9 @@ clean-vmf-scored-all:
 
 clean-wic-scored-all:
     rm -rf output/analysis/*/wic_scored
+
+clean-comparative-all:
+    rm -rf output/analysis/*/comparative
 
 # --- Data Transfer
 
