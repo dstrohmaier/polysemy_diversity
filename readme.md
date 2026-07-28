@@ -1,42 +1,69 @@
-# Estimating Diversity
+# Estimating Shifts in Diversity
 
-The goal of this repository is to estimate the diversity of usages per word in a given corpus. For this purpose, the repository contains the code required to compare two measures of polysemy of word occurrences in a text.
+The goal of this repository is to compare corpora and estimate the shift in the diversity of usages per word. For this purpose, the repository contains the code required to compare three measures of the shift (1 baseline + 2 methods) in polysemy of word occurrences in a text.
 
-## The Two Methods for Estimating Diversity
+## One Baseline and Two Methods for Estimating Diversity
 
-The two methods are:
+The baseline and the two methods are:
 
-1. vMF-based: We fit and use a von Mises-Fisher (vMF) distribution to estimate diversity.
-2. WiC-based: We are applying a transformer model trained on the word-in-context (WiC) task to distinguish whether words share a sense.
+0. Cosine baseline: We use cosine similarities to measure the diversity and then take a log-ratio to estimate shift in diversity.
+1. vMF-based: We fit and use a von Mises-Fisher (vMF) distribution to estimate diversity, using the log-ratio of kappa parameters to indicate the shift in diversity.
+2. WiC-based: We are applying a transformer model trained on the word-in-context (WiC) task to distinguish whether words share a sense, again taking a log-ratio to indicate shifts in diversity.
 
 ### vMF Method
 
-TO BE SPECIFIED
+Our vMF method closely follows the work of Nagata et al. (2023) with a twist for easier readability. We take the log-ratio of the estimated $\kappa$ parameters of the von Mises-Fisher distribution for the source (S) and target corpus (T):
+
+$$\log \frac{\kappa_S}{\kappa_T}$$
+
+The $\kappa$ parameters grow _inversely_ with the diversity of the usages. We flip the ratio originally put forward by Nagata et al., i.e. put $\kappa_T$ in the denominator and $\kappa_S$ in the numerator, so that the log-ratio increases when the target corpus is more diverse.
 
 ### WiC Method
+
+The WiC method approximates the following method:
+
+$$\log \frac{p(\text{same}|S)}{p(\text{same}|T)}$$
+
+Effectively, we use the log of the ratio of two Simpson-diversity measures (see the discussions below). To see this, note that $p(\text{same}) \approx \sum_i p^2_i$, where $i$ indicates the senses available. The right-hand side is the inverse of the Simpson-diversity. This equivalence also allows us to derive our score as follows:
+
+$$\frac{\text{Simpson-diversity}_T}{\text{Simpson-diversity}_S} = \frac{\frac{1}{\sum_{i=1}^{R} p_{T,i}^{2}}}{\frac{1}{ \sum_{i=1}^{R} p_{S,i}^{2}}} = \frac{\sum_{i=1}^{R} p_{S,i}^{2}}{\sum_{i=1}^{R} p_{T,i}^{2}}$$
+
+This ratio increases with the diversity of the target corpus being larger than that of the source corpus. This is the same direction as for the vMF method.
 
 The WiC model architecture and training are specified in [wic_models.md](./wic_models.md).
 
 To create WiC-based diversity scores, we sample pairs of occurrences from the corpus and apply the WiC model to it. The mean probability that a pair differs in sense should tell us how diverse the senses of a target word in a corpus are.
 
-## Evaluation: Polysemy-Based Simulation Study
+## First Evaluation: Polysemy-Based Simulation Study
 
-To compare the two methods for estimating diversity, we use a simulation study with known ground-truth: We create artificial datasets where we know the correct senses by sampling from a WSD corpus. The approach is similar to that by [Schlechtweg & Walde (2020)](https://arxiv.org/abs/2001.03216).
+To compare the two methods for estimating shifts in diversity, we use a simulation study with known ground-truth: We create artificial datasets where we know the correct senses by sampling from a WSD corpus. The approach is similar to that by [Schlechtweg & Walde (2020)](https://arxiv.org/abs/2001.03216).
 
 To make the datasets realistic, we start from a Zipfian distribution and vary two parameters:
 
-1. **Evenness**: the slope of the Zipfian distribution (eveness of sense distribution), and
-2. **Richness**: the support of the Zipfian distribution, i.e. richness as the the number of distinct senses.
+1. **Evenness**: the slope of the Zipfian distribution (evenness of sense distribution), and
+2. **Richness**: the support of the Zipfian distribution, i.e. richness as the number of distinct senses.
 
 We estimate the slope from the WSD corpus. (The estimate of the slope uses all occurrences of the lemma. In other processing steps, we require a minimum of 5 instances for simulation purposes, but the base slope should be naturalistic.)
 
 By using sense-annotated occurrences to create dataset with simulated distributions, we can compare the diversity estimates for datasets with known properties.
 
-To intepret this simulation-based evaluation, we have to consider a few key facts:
+To interpret this simulation-based evaluation, we have to consider a few key facts:
 
 1. The task is close the original WiC task, which arguably favours the WiC-based scoring. Therefore, one should always compare against the results of our second evaluation task.
-2. The simulated data vary along two dimensions (evenness and richness) but both the vMF and WiC-based method produce a single score. Part of our goal is to see to which degree the two methods track the two different dimensions. Therefore, we provide scoring along both dimensions.
+2. The simulated data vary along two dimensions (evenness and richness) but both the vMF and the WiC-based method produce a single score. Part of our goal is to see to which degree the two methods track the two different dimensions. Therefore, we provide scoring along both dimensions.
 
+
+### Source and Target Corpus
+
+The source and target corpus are defined per word. The primary source corpus is the one with the steepest Zipfian slope-parameter and lowest number of senses $k$. We make the following comparisons:
+
+- We compare all other corpora against this primary corpus. 
+- We compare along the dimension of $k$, i.e. we compare the corpora that differ only in $k$ while sharing slope.
+- We compare along the dimension of slope, i.e. we compare the corpora that differ only in slope while sharing senses $k$.
+
+For all these comparisons, the source corpus is always the one with the expected lower diversity (steeper slope or lower $k$).
+
+Different sizes for source and target corpus lead to problems. To address this issue, we always sample the larger corpus down to the size of the smaller.
 
 ### Multi-Dimension Scoring
 
@@ -50,29 +77,45 @@ $${}^{q}D = \left( \sum_{i=1}^{R} p_i^{q} \right)^{1/(1-q)}$$
 | **1** | Shannon diversity | $\exp\left(-\sum_{i=1}^{R} p_i \ln p_i\right)$ | Each category weighted in proportion to its abundance |
 | **2** | Simpson diversity | $1 / \sum_{i=1}^{R} p_i^{2}$                     | Weighted toward the most abundant categories          |
 
-We will score for all three standard q values. Consequently, for each of the simulated datasets (lemmata) we will have three values with which we can correlate the scores. We use Spearman's Rank Correlation (SRC) for these.
+We will score the ground-truth values for all three standard q values and then also consider the log-ratios for the source-target corpus comparisons:
+
+$$\log \frac{{}^{q}D(T)}{{}^{q}D(S)}\, \text{ for } q \in \{0,1,2\}$$
+
+ Consequently, for each of the simulated datasets (lemmata) we will have three shift values with which we can correlate the scores of the baseline and the two methods. We use Spearman's Rank Correlation (SRC) for these.
 
 Evenness could be operationalised as ${}^{1}D/{}^{0}D$ but we stick with the three diversity metrics.
 
 
 #### Relation to the WiC-based Scoring
 
-Let `p(diff)` be the probability that a random pair of usages for a word type differ in their sense as assigned by a WiC model. Assuming a perfect WiC model, the `p(diff)` is equivalent to the common formulation of Gini's diversity index: $1- \sum_i p^2_i$, where $p^2_i$ is the probability that two draws fall into category $i$. This index is dominatd by frequent senses and, therefore, provides a measure of the dominance of the most frequent sense. As can be seen, Gini's diversity index is closely related Simpson diversity, i.e. the diversity score with $q=2$
+Let `p(same)` be the probability that a random pair of word tokens of the same type share a sense. Assuming a perfect WiC model, the $p(\text{same}) \approx \sum_i p^2_i$, where $p^2_i$ is the probability that two draws fall into category $i$. That is, `p(same)` is the inversion of the Simpson diversity index. This index is dominated by frequent senses and, therefore, provides a measure of the dominance of the most frequent sense.
 
 
 ### Vocabularies
 
-Our simulation study covers for each PoS up to 100 lemmata with at least 3 senses. If there are more than a 100 lemmata with 3+ senses, we select the 100 with most senses in the WSD corpus. For a sense to be considered in the count, we require a minimum of 5 instances. The filter of 5 is also applied later during the simulation. We find the lowest number of eligible lemmata, just 30, for adverbs .
+Our simulation study covers for each PoS up to 100 lemmata with at least 3 senses. If there are more than 100 lemmata with 3+ senses, we select the 100 with most senses in the WSD corpus. For a sense to be considered in the count, we require a minimum of 5 instances. The filter of 5 is also applied later during the simulation. We find the lowest number of eligible lemmata, just 30, for adverbs .
 
 The creation of these vocabs also creates statistic files (markdown format) which provide numbers for every PoS as well as an overview statistics file that describes the senses per lemma, instances per lemma, and instances per sense.
 
-In addition, we have a list of 10 target verbs. However, 3 of these verbs have insufficient senses for being considered present in the source WSD dataset.
 
+## Second Evaluation: Diachronic Data Study
 
-## Evaluation: Diachronic Data Study
+For the second evaluation we use the DWUG EN dataset. This dataset of historical word use provides information that can be used to estimate both **richness** and **evenness**. We use the two decade groupings:
 
-Decision open, plausible candidates include DWUG EN.
+1. 1810–1860
+2. 1960–2010
 
+As in the first evaluation
+- we calculate the ground truth values of the log-ratio of the diversity measures (using grouping 1 as the source and grouping 2 as the target corpus), and
+- we evaluate the vMF- and the WiC-based method using Spearman's rank correlation.
+
+vMF- and WiC-based scores are calculated on the DWUG usages. Note that we switch from a setup in which the source corpus is the least diverse one to a setup in which the source corpus is the older one.
+
+We evaluate per lemma and apply the same downsample rule as in the first evaluation to make sure the corpora are of the same size.
+
+The DWUG EN study likely favours WiC less because it is not based on a dictionary-style sense inventory as is commonly used to conceptualise the WiC task. 
+
+(Possible extension: Use a gradual ground truth. The current sketch uses the clustering discretization but we can use the raw gradual data and our scores are gradual anyway.)
 
 ## Requirements
 
@@ -102,7 +145,6 @@ The commands required to run the code are provided in the justfile. The order of
 6. score-vmf-all: Score all simulation datasets with the vMF method, writing the results to `output/scores/<dataset>`.
 7. score-wic-all: Score all simulation datasets with the WiC method, writing the results to `output/scores/<dataset>`.
 
-
 ## Relevant Literature
 
 ### NLP Semantic Change
@@ -122,7 +164,9 @@ The commands required to run the code are provided in the justfile. The order of
 ### vMF
 
 - Banerjee, Dhillon, Ghosh, & Sra (2005). [Clustering on the Unit Hypersphere using von Mises-Fisher Distributions](https://jmlr.org/papers/v6/banerjee05a.html). *JMLR*, 6(46), 1345–1382.
+- Kishino, Yamagiwa, Nagata, Yokoi, & Shimodaira (2025). [Quantifying Lexical Semantic Shift via Unbalanced Optimal Transport](https://doi.org/10.18653/v1/2025.acl-long.774). *ACL 2025*, 15913–15933.
 - Nagata, Takamura, Otani, & Kawasaki (2023). [Variance Matters: Detecting Semantic Differences without Corpus/Word Alignment](https://doi.org/10.18653/v1/2023.emnlp-main.965). *EMNLP 2023*, 15609–15622.
+
 
 ### Embeddings and Models
 
