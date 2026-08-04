@@ -22,10 +22,12 @@ import seaborn as sns  # type: ignore
 from analysis.io import save_fig, write_table
 from analysis.scored.stats import (
     GT_SHIFT_COLS,
+    CorpusIterator,
     correlation_table,
     pair_ground_truth,
     score_scatter,
 )
+from data_processing.simulation_loading import iter_corpora
 
 logger = logging.getLogger("div")
 
@@ -46,7 +48,12 @@ def _method_palette() -> dict[str, tuple]:
     return dict(zip(_METHOD_ORDER, sns.color_palette("colorblind", len(_METHOD_ORDER))))
 
 
-def _load_method(scores_dir: Path, method: str, sim_dir: Path) -> pd.DataFrame | None:
+def _load_method(
+    scores_dir: Path,
+    method: str,
+    sim_dir: Path,
+    iter_fn: CorpusIterator = iter_corpora,
+) -> pd.DataFrame | None:
     """Load one method's pair scores with ground-truth shift columns attached.
 
     Returns ``None`` (with a warning) if the method's pair-scores CSV is absent, so
@@ -57,7 +64,7 @@ def _load_method(scores_dir: Path, method: str, sim_dir: Path) -> pd.DataFrame |
     if not path.exists():
         logger.warning("No %s at %s; %s excluded from comparison.", filename, path, method)
         return None
-    return pair_ground_truth(pd.read_csv(path), sim_dir)
+    return pair_ground_truth(pd.read_csv(path), sim_dir, iter_fn)
 
 
 def shift_correlation_table(loaded: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -115,12 +122,24 @@ def _plot_rho_by_scheme(corr: pd.DataFrame, gt_col: str, figures_dir: Path, name
     save_fig(fig, figures_dir, name)
 
 
-def analyse_comparative(scores_dir: Path, sim_dir: Path, out_root: Path) -> None:
-    """Compare the methods' shift scores against the ground-truth diversity shifts."""
+def analyse_comparative(
+    scores_dir: Path,
+    sim_dir: Path,
+    out_root: Path,
+    iter_fn: CorpusIterator = iter_corpora,
+) -> None:
+    """Compare the methods' shift scores against the ground-truth diversity shifts.
+
+    ``iter_fn`` selects how ``sim_dir`` is walked for the corpora's ``.meta.json``
+    sidecars -- the simulated layout by default, or
+    :func:`~data_processing.dwug_loading.iter_dwug_corpora` for the diachronic
+    evaluation, where the single ``diachronic`` scheme makes the per-scheme grouping
+    collapse to one row per (method, Hill order).
+    """
     tables_dir = out_root / "tables"
     figures_dir = out_root / "figures"
 
-    loaded = {m: _load_method(scores_dir, m, sim_dir) for m in _METHOD_ORDER}
+    loaded = {m: _load_method(scores_dir, m, sim_dir, iter_fn) for m in _METHOD_ORDER}
     loaded = {m: df for m, df in loaded.items() if df is not None}
     if not loaded:
         logger.warning("No method pair-scores found under %s; nothing to analyse.", scores_dir)

@@ -6,7 +6,7 @@ export LD_LIBRARY_PATH := "../diversity_env/lib:" + env("LD_LIBRARY_PATH", "")
 
 # GPU used by every recipe that touches jax/cupy/torch. Override per invocation with
 # `just gpu=0 <recipe> ...` rather than editing recipes one by one.
-gpu := "2"
+gpu := "1"
 
 unit-test:
     python -m unittest discover -s './tests' -p '*_tests.py'
@@ -36,6 +36,15 @@ simulate-most-diverse-all:
     for pos in noun verb adj adv; do
         just simulate-most-diverse "$pos"
     done
+
+# --- DWUG preparation (second evaluation)
+
+# Kept out of source_data/simulated_data so the simulation's *-all recipes, which
+# glob that directory, do not pick DWUG up.
+
+# Split DWUG EN into per-lemma decade-grouping corpora for the scorers.
+prepare-dwug dwug_root="source_data/dwug_en" output_dir="source_data/dwug_corpora":
+    python prepare_dwug.py {{ dwug_root }} {{ output_dir }}
 
 # --- Training WiC
 
@@ -87,6 +96,27 @@ score-cosine-all:
         just score-cosine "$sim_dir" "output/scores/$name"
     done
 
+# --- Scoring (DWUG, second evaluation)
+
+# --dataset dwug switches the pair enumerator to the single g1->g2 comparison
+# per lemma.
+
+# Score the prepared DWUG corpora with one method (cosine, vmf, or wic).
+score-dwug method dwug_dir="source_data/dwug_corpora" output_dir="output/scores/dwug_en" model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES=gpu:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{ method }}" = "wic" ]; then
+        python score_data.py wic {{ dwug_dir }} {{ output_dir }} --dataset dwug --base-model "{{ model }}"
+    else
+        python score_data.py {{ method }} {{ dwug_dir }} {{ output_dir }} --dataset dwug --hf-model-name "{{ model }}"
+    fi
+
+score-dwug-all dwug_dir="source_data/dwug_corpora" output_dir="output/scores/dwug_en":
+    #!/usr/bin/env bash
+    for method in cosine vmf wic; do
+        just score-dwug "$method" "{{ dwug_dir }}" "{{ output_dir }}"
+    done
+
 # --- Analysis
 
 analyse-raw-simulated sim_dir output_dir:
@@ -119,6 +149,9 @@ analyse-comparative-all:
         just analyse-comparative "output/scores/$name" "$sim_dir" "output/analysis/$name"
     done
 
+analyse-comparative-dwug scores_dir="output/scores/dwug_en" dwug_dir="source_data/dwug_corpora" output_dir="output/analysis/dwug_en":
+    python run_analysis.py comparative {{ scores_dir }} {{ output_dir }} {{ dwug_dir }} --dataset dwug
+
 # Globs on the output side (not simulated_data) so results of datasets whose sim
 # dirs have since been removed are cleaned up too.
 clean-comparative-all:
@@ -126,8 +159,48 @@ clean-comparative-all:
 
 # --- Data Transfer
 
-push2flamingo:
-    rsync -rtvu --progress --exclude-from=../../ignorelist.txt ./ ds858@flamingo.cl.cam.ac.uk:/local/scratch/ds858/wic_shift
+FLAMINGO := "ds858@flamingo.cl.cam.ac.uk:/local/scratch/ds858/wic_shift"
+
+# Shared confirm-then-sync helper. `args` is forwarded verbatim to both the
+# dry-run and the real rsync invocation, so it must fully specify source and
+# destination, plus any --filter rules the caller needs. It is expanded unquoted,
+# so paths must not contain spaces.
+#
+# rsync and ssh need nothing from the conda env, whose libtinfo makes bash warn
+# about missing version information. Bash prints that at startup, before the
+# script's first line, so the shebang clears the variable rather than the body.
+_rsync_with_confirm *args:
+    #!/usr/bin/env -S env -u LD_LIBRARY_PATH bash
+    set -euo pipefail
+    # Check the dry run's exit status separately: piping it straight into
+    # `grep ... || true` would mask an rsync failure as "no deletions".
+    if ! dry_run=$(rsync -rtvu --delete --dry-run --exclude-from=.rsyncignore {{args}}); then
+        echo "Dry run failed; aborting before the real sync." >&2
+        exit 1
+    fi
+    deletions=$(printf '%s\n' "$dry_run" | grep '^deleting ' || true)
+    if [ -n "$deletions" ]; then
+        echo "-- Dry run: files that would be deleted --"
+        echo "$deletions"
+        if [ ! -t 0 ]; then
+            echo "Deletions pending but no terminal to confirm on; aborting." >&2
+            exit 1
+        fi
+        read -rp "Proceed with sync? [y/N] " reply
+        if [[ ! "$reply" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+            echo "Aborted."
+            exit 1
+        fi
+    fi
+    rsync -rtvu --delete --progress --exclude-from=.rsyncignore {{args}}
+
+
+# Push the working tree to flamingo.
+push2flamingo: (_rsync_with_confirm "./" FLAMINGO)
+
+# Pull remote evaluation results and analysis outputs. Protects locally-held
+# models (see pull-models) from the helper's --delete.
+pull-output: (_rsync_with_confirm "--filter=P_models/" "--filter=P_models/**" (FLAMINGO + "/output/") "./output/")
 
 pull-analysis:
     rsync -rtvu --progress --exclude-from=../../ignorelist.txt ds858@flamingo.cl.cam.ac.uk:/local/scratch/ds858/wic_shift/output/analysis ./output/

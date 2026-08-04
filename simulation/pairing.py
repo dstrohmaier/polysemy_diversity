@@ -13,7 +13,7 @@ discussion for vMF and WiC). Expected diversity rises as the Zipfian slope gets
 *flatter* (smaller applied slope -> more even senses) and as k grows, so the
 low-diversity anchor is the **steepest** slope and **lowest** k.
 
-However, when evaluating on DWUG, S is the **older** corpus. No assumption is made 
+However, when evaluating on DWUG, S is the **older** corpus. No assumption is made
 about diversity.
 
 Comparison schemes (readme "Source and Target Corpus")
@@ -22,32 +22,47 @@ Comparison schemes (readme "Source and Target Corpus")
   source (steepest slope, lowest k).
 * ``along_k``     -- corpora that share a slope but differ in k; S = lower k.
 * ``along_slope`` -- corpora that share k but differ in slope; S = steeper slope.
+* ``diachronic``  -- the DWUG evaluation's single comparison per lemma: the
+  1810-1860 grouping against the 1960-2010 one.
 """
 
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
-from data_processing.simulation_loading import Corpus
+from data_processing.dwug_loading import CorpusHandle, DwugCorpus, iter_dwug_corpora
+from data_processing.simulation_loading import Corpus, iter_corpora
 
 logger = logging.getLogger("div")
+
+# The DWUG evaluation has one comparison per lemma, so every pair carries this single
+# scheme tag. The comparative analysis groups correlations by scheme, which then
+# yields one row per (method, ground-truth order) across all lemmata.
+DIACHRONIC_SCHEME = "diachronic"
 
 
 @dataclass(frozen=True)
 class CorpusPair:
     """A (source, target) corpus comparison of one lemma.
 
-    ``source`` is the lower-expected-diversity corpus (steeper slope / lower k);
-    ``target`` the higher. ``scheme`` records which comparison produced the pair so
+    For the simulation schemes ``source`` is the lower-expected-diversity corpus
+    (steeper slope / lower k) and ``target`` the higher; for ``diachronic`` it is
+    simply the older corpus. ``scheme`` records which comparison produced the pair so
     the analysis can group correlations by comparison type.
+
+    The members are typed as :class:`CorpusHandle` -- the structural surface the
+    scorers actually use -- so a pair can hold either a simulated ``Corpus`` or a
+    ``DwugCorpus``.
     """
 
     lemma_pos: str
-    scheme: str  # "primary" | "along_k" | "along_slope"
-    source: Corpus
-    target: Corpus
+    scheme: str  # "primary" | "along_k" | "along_slope" | "diachronic"
+    source: CorpusHandle
+    target: CorpusHandle
 
 
 def _more_diverse(a: Corpus, b: Corpus) -> Corpus:
@@ -179,3 +194,51 @@ def equalise_indices(len_a: int, len_b: int, seed: int = 0) -> tuple[np.ndarray,
     n = min(len_a, len_b)
     rng = np.random.default_rng(seed)
     return _keep_indices(len_a, n, rng), _keep_indices(len_b, n, rng)
+
+
+def enumerate_dwug_pairs(corpora: list[DwugCorpus]) -> list[CorpusPair]:
+    """Build the one (source, target) pair per lemma for the diachronic evaluation.
+
+    Source is grouping 1 (1810-1860), target grouping 2 (1960-2010): here the source
+    is the *older* corpus rather than the less diverse one (readme "Second
+    Evaluation"), so unlike :func:`enumerate_pairs` no diversity ordering is applied.
+
+    A lemma missing either grouping is skipped with a warning rather than aborting the
+    run: a pair needs both sides, and one incomplete lemma should not cost the whole
+    dataset's scores.
+    """
+    by_lemma: dict[str, dict[int, DwugCorpus]] = defaultdict(dict)
+    for c in corpora:
+        by_lemma[c.lemma_pos][c.grouping] = c
+
+    pairs: list[CorpusPair] = []
+    for lemma_pos, groupings in sorted(by_lemma.items()):
+        source, target = groupings.get(1), groupings.get(2)
+        if source is None or target is None:
+            logger.warning(
+                "%s: missing grouping(s) %s; skipping",
+                lemma_pos,
+                sorted({1, 2} - set(groupings)),
+            )
+            continue
+        pairs.append(CorpusPair(lemma_pos, DIACHRONIC_SCHEME, source, target))
+
+    logger.info("enumerated %d diachronic pairs across %d lemmata", len(pairs), len(by_lemma))
+    return pairs
+
+
+# How a scoring driver turns a dataset directory into the pairs to score. The drivers
+# take one of these rather than sniffing the directory layout: a half-populated or
+# misnamed directory would make sniffing silently pick the wrong branch, whereas an
+# explicit enumerator puts the choice at the call site (score_data.py's --dataset).
+PairEnumerator = Callable[[Path], list[CorpusPair]]
+
+
+def simulated_pairs(sim_dir: Path) -> list[CorpusPair]:
+    """Default enumerator: the three simulation comparison schemes under ``sim_dir``."""
+    return enumerate_pairs(list(iter_corpora(sim_dir)))
+
+
+def dwug_pairs(dwug_dir: Path) -> list[CorpusPair]:
+    """Enumerator for the diachronic evaluation: one g1->g2 pair per lemma."""
+    return enumerate_dwug_pairs(list(iter_dwug_corpora(dwug_dir)))

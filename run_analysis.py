@@ -14,7 +14,9 @@ ANALYSIS_TYPE selects what to analyse:
 The descriptive modes take ``DATA_DIR OUTPUT_DIR`` (DATA_DIR = a simulated_data
 dataset dir). The ``comparative`` mode takes ``SCORES_DIR OUTPUT_DIR SIM_DIR``:
 SCORES_DIR is the dataset's scoring output (``output/scores/<dataset>``) and SIM_DIR
-is its simulated_data dir (for the corpus ``.meta.json`` sense-probability sidecars).
+is its corpus dir (for the ``.meta.json`` sense-probability sidecars). Pass
+``--dataset dwug`` there to analyse the diachronic evaluation, whose corpus dir is
+the one written by ``prepare_dwug.py``.
 
 Each mode writes CSV/Markdown/LaTeX tables and PDF figures under
 ``OUTPUT_DIR/<analysis_type>/``.
@@ -35,7 +37,12 @@ import click  # noqa: E402
 from analysis.scored.comparative import analyse_comparative  # noqa: E402
 from analysis.simulated_data.raw_simulated import analyse_raw_simulated  # noqa: E402
 from analysis.simulated_data.wic_simulated import analyse_wic_simulated  # noqa: E402
+from data_processing.dwug_loading import iter_dwug_corpora  # noqa: E402
+from data_processing.simulation_loading import iter_corpora  # noqa: E402
 from utilities.logging_utils import start_logging  # noqa: E402
+
+# Corpus layout under SIM_DIR -> how to walk it for the .meta.json sidecars.
+_CORPUS_ITERATORS = {"simulated": iter_corpora, "dwug": iter_dwug_corpora}
 
 
 @click.command()
@@ -46,17 +53,26 @@ from utilities.logging_utils import start_logging  # noqa: E402
 @click.argument("data_dir", type=Path)
 @click.argument("output_dir", type=Path)
 @click.argument("sim_dir", type=Path, required=False)
+@click.option(
+    "--dataset",
+    type=click.Choice(sorted(_CORPUS_ITERATORS)),
+    default="simulated",
+    show_default=True,
+    help="[comparative] Layout of SIM_DIR, selecting how corpus .meta.json sidecars "
+    "are enumerated for the ground truth.",
+)
 def main(
     analysis_type: str,
     data_dir: Path,
     output_dir: Path,
     sim_dir: Path | None,
+    dataset: str,
 ) -> None:
     """Run ANALYSIS_TYPE, writing tables and figures under OUTPUT_DIR/<analysis_type>/.
 
     For the descriptive modes, DATA_DIR is a simulated_data dataset dir. For
     ``comparative``, DATA_DIR is the dataset's scoring output dir and SIM_DIR
-    (required) is its simulated_data dir.
+    (required) is its corpus dir.
     """
     out_root = output_dir / analysis_type
     out_root.mkdir(parents=True, exist_ok=True)
@@ -70,10 +86,12 @@ def main(
         case "comparative":
             if sim_dir is None:
                 raise click.UsageError(
-                    "comparative requires SIM_DIR (the simulated_data dir holding "
-                    "corpus .meta.json sidecars)."
+                    "comparative requires SIM_DIR (the corpus dir holding the "
+                    ".meta.json sidecars)."
                 )
-            analyse_comparative(data_dir, sim_dir, out_root)
+            analyse_comparative(
+                data_dir, sim_dir, out_root, iter_fn=_CORPUS_ITERATORS[dataset]
+            )
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ with Spearman's rho and bootstrap CIs, and draws the per-pair score scatter.
 import json
 import logging
 from pathlib import Path
+from typing import Callable, Iterable
 
 import numpy as np
 import pandas as pd  # type: ignore
@@ -15,6 +16,7 @@ import seaborn as sns  # type: ignore
 from scipy.stats import bootstrap, spearmanr  # type: ignore
 
 from analysis.io import save_fig
+from data_processing.dwug_loading import CorpusHandle
 from data_processing.simulation_loading import iter_corpora
 from simulation.diversity import STANDARD_ORDERS, diversity_shift
 
@@ -24,18 +26,29 @@ logger = logging.getLogger("div")
 # targets each method's log-ratio score is correlated against.
 GT_SHIFT_COLS = {q: f"gt_shift_q{q}" for q in STANDARD_ORDERS}
 
+# How a dataset directory is walked to reach the corpora's .meta.json sidecars. Both
+# evaluations store the ground-truth distribution under the same ``sense_probs`` key,
+# so swapping the iterator is all the diachronic evaluation needs.
+CorpusIterator = Callable[[Path], Iterable[CorpusHandle]]
+
 # Fixed generators so bootstrap CIs are reproducible across runs.
 _BOOT_KW = dict(n_resamples=1000, vectorized=False, paired=True, method="percentile")
 
 
-def _sense_probs_lookup(sim_dir: Path) -> dict[tuple[str, str], dict[str, float]]:
-    """Map ``(lemma_pos, variant_stem)`` -> that corpus's design ``sense_probs``.
+def _sense_probs_lookup(
+    sim_dir: Path, iter_fn: CorpusIterator = iter_corpora
+) -> dict[tuple[str, str], dict[str, float]]:
+    """Map ``(lemma_pos, variant_stem)`` -> that corpus's ``sense_probs``.
 
     Read from each corpus's ``.meta.json`` sidecar; the diversity ground truth is a
     pure function of these probabilities (no re-simulation, nothing persisted).
+
+    For the simulation these are the Zipfian *design* probabilities; for DWUG
+    (``iter_fn=iter_dwug_corpora``) they are the grouping's empirical cluster
+    distribution, taken over the full grouping before any downsampling.
     """
     lookup: dict[tuple[str, str], dict[str, float]] = {}
-    for corpus in iter_corpora(sim_dir):
+    for corpus in iter_fn(sim_dir):
         if not corpus.meta_path.exists():
             continue
         meta = json.loads(corpus.meta_path.read_text(encoding="utf-8"))
@@ -43,7 +56,9 @@ def _sense_probs_lookup(sim_dir: Path) -> dict[tuple[str, str], dict[str, float]
     return lookup
 
 
-def pair_ground_truth(pair_scores: pd.DataFrame, sim_dir: Path) -> pd.DataFrame:
+def pair_ground_truth(
+    pair_scores: pd.DataFrame, sim_dir: Path, iter_fn: CorpusIterator = iter_corpora
+) -> pd.DataFrame:
     """Attach ground-truth diversity shifts to a method's pair-score rows.
 
     For each row -- keyed by ``(lemma_pos, source_variant, target_variant)`` -- adds
@@ -51,8 +66,12 @@ def pair_ground_truth(pair_scores: pd.DataFrame, sim_dir: Path) -> pd.DataFrame:
     ``log(qD(target) / qD(source))`` computed from the two corpora's stored
     ``sense_probs``. Rows whose variants lack a ``.meta.json`` get NaN targets and
     are logged.
+
+    ``iter_fn`` selects the dataset layout: the simulated ``k*_offset_*`` grid by
+    default, or :func:`~data_processing.dwug_loading.iter_dwug_corpora` for the
+    diachronic evaluation, whose variant stems are ``g1``/``g2``.
     """
-    lookup = _sense_probs_lookup(sim_dir)
+    lookup = _sense_probs_lookup(sim_dir, iter_fn)
     out = pair_scores.copy()
     for q, col in GT_SHIFT_COLS.items():
         values = []

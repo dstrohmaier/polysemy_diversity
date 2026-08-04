@@ -13,6 +13,11 @@ layout produced by simulate_data.py):
 * ``cosine`` -- baseline: a cosine-geometry diversity per corpus; score
   ``log(D_cos_T / D_cos_S)``. Writes ``cosine_pair_scores.csv``.
 
+``--dataset`` selects the corpus layout under SIM_DIR, and with it how pairs are
+enumerated: the simulated ``k*_offset_*`` grid (three schemes per lemma), or the
+DWUG decade groupings prepared by ``prepare_dwug.py`` (one ``g1``->``g2`` pair per
+lemma, the readme's second evaluation).
+
 All outputs are written to OUTPUT_DIR.
 """
 
@@ -22,9 +27,13 @@ import click
 import torch
 
 from cosine.cosine_estimation import get_corpora_cosine_pairs
+from simulation.pairing import dwug_pairs, simulated_pairs
 from utilities.logging_utils import start_logging
 from vmf.vmf_estimation import get_corpora_vmf_pairs
 from wic.wic_estimation import get_corpora_wic_pairs
+
+# Corpus layout under SIM_DIR -> the enumerator that turns it into scoring pairs.
+_PAIR_ENUMERATORS = {"simulated": simulated_pairs, "dwug": dwug_pairs}
 
 
 @click.command()
@@ -52,6 +61,14 @@ from wic.wic_estimation import get_corpora_wic_pairs
     show_default=True,
     help="[wic] Base model name used to locate the default trained WiC model dir.",
 )
+@click.option(
+    "--dataset",
+    type=click.Choice(sorted(_PAIR_ENUMERATORS)),
+    default="simulated",
+    show_default=True,
+    help="Corpus layout under SIM_DIR: the simulated k/offset grid, or DWUG decade "
+    "groupings (one g1->g2 pair per lemma).",
+)
 def score(
     scoring: str,
     sim_dir: Path,
@@ -59,19 +76,27 @@ def score(
     hf_model_name: str,
     wic_model_dir: Path | None,
     base_model: str,
+    dataset: str,
 ) -> None:
     """Score every corpus pair under SIM_DIR using SCORING (vmf, wic, or cosine)."""
 
     start_logging(output_dir / "logs", file_name=f"score_{scoring}.log")
+    enumerate_corpus_pairs = _PAIR_ENUMERATORS[dataset]
 
     match scoring:
         case "vmf":
             get_corpora_vmf_pairs(
-                sim_dir, output_dir / "vmf", hf_model_name=hf_model_name
+                sim_dir,
+                output_dir / "vmf",
+                hf_model_name=hf_model_name,
+                enumerate_corpus_pairs=enumerate_corpus_pairs,
             )
         case "cosine":
             get_corpora_cosine_pairs(
-                sim_dir, output_dir / "cosine", hf_model_name=hf_model_name
+                sim_dir,
+                output_dir / "cosine",
+                hf_model_name=hf_model_name,
+                enumerate_corpus_pairs=enumerate_corpus_pairs,
             )
         case "wic":
             if not torch.cuda.is_available():
@@ -81,6 +106,7 @@ def score(
                 output_dir / "wic",
                 model_dir=wic_model_dir,
                 base_model=base_model,
+                enumerate_corpus_pairs=enumerate_corpus_pairs,
             )
 
 

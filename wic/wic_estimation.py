@@ -22,8 +22,12 @@ from transformers import (
     TrainingArguments,
 )
 
-from data_processing.simulation_loading import iter_corpora
-from simulation.pairing import CorpusPair, enumerate_pairs, equalise_indices
+from simulation.pairing import (
+    CorpusPair,
+    PairEnumerator,
+    equalise_indices,
+    simulated_pairs,
+)
 from wic.preprocessing import preprocess_wic_targets
 from wic.target_vector_model import (
     HEAD_PARAM_NAMES,
@@ -237,11 +241,14 @@ def get_corpora_wic_pairs(
     base_model: str = "answerdotai/ModernBERT-large",
     models_root: Path = Path("output/models"),
     seed: int = 0,
+    enumerate_corpus_pairs: PairEnumerator = simulated_pairs,
 ) -> pd.DataFrame:
     """Compute the WiC shift score for every corpus pair under ``sim_dir``.
 
-    Enumerates (source, target) pairs (three schemes per lemma) and writes one
-    combined ``wic_pair_scores.csv`` to ``output_dir``.
+    ``enumerate_corpus_pairs`` decides which (source, target) pairs ``sim_dir``
+    yields: the default covers the simulation's three comparison schemes, while
+    :func:`~simulation.pairing.dwug_pairs` gives the diachronic evaluation's single
+    pair per lemma. Writes one combined ``wic_pair_scores.csv`` to ``output_dir``.
     """
     if model_dir is None:
         model_dir = (
@@ -252,7 +259,11 @@ def get_corpora_wic_pairs(
     model = load_wic_model(str(model_dir))
     trainer = _build_predict_trainer(model, tokenizer)
 
-    pairs = enumerate_pairs(list(iter_corpora(sim_dir)))
+    pairs = enumerate_corpus_pairs(sim_dir)
+    assert pairs, (
+        f"no corpus pairs found under {sim_dir}; is the directory layout the one the "
+        f"chosen enumerator expects (see score_data.py --dataset)?"
+    )
     rows = []
     for pair in pairs:
         record = score_pair_wic(pair, trainer, tokenizer, seed=seed)

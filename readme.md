@@ -123,7 +123,15 @@ vMF- and WiC-based scores are calculated on the DWUG usages. Note that we switch
 
 We evaluate per lemma and apply the same downsample rule as in the first evaluation to make sure the corpora are of the same size.
 
-The DWUG EN study likely favours WiC less because it is not based on a dictionary-style sense inventory as is commonly used to conceptualise the WiC task. 
+The DWUG EN study likely favours WiC less because it is not based on a dictionary-style sense inventory as is commonly used to conceptualise the WiC task.
+
+### Senses and Ground Truth in DWUG
+
+The sense inventory is DWUG's optimal clustering (`clusters/opt/`). Usages that clustering leaves unassigned (cluster `-1`) are dropped from both the ground truth and the data the scorers see. Dropping them reproduces the cluster frequency distributions DWUG itself publishes in `stats/opt/stats_groupings.csv`.
+
+The ground truth is computed per grouping over **all** its (noise-free) usages, before the downsample. Downsampling exists only to stop a corpus-size difference contaminating the *scores*; the diversity of a grouping is a property of the data, not of whichever subsample a scorer happened to see.
+
+One asymmetry between the two evaluations is worth keeping in mind when reading the results side by side. In the simulation, the ground-truth sense distribution is the *design* distribution: a property of the generative process, independent of the sample drawn from it. In DWUG it is the *observed* distribution of roughly 100 usages per grouping. Richness (q=0) is the order most exposed to this: it is downward-biased at finite sample size, and the bias is uneven across lemmata, since a few groupings are considerably smaller than the rest after noise removal. The Shannon and Simpson orders (q=1, 2) weight by abundance and are correspondingly more robust.
 
 (Possible extension: Use a gradual ground truth. The current sketch uses the clustering discretization but we can use the raw gradual data and our scores are gradual anyway.)
 
@@ -157,7 +165,15 @@ The commands required to run the code are provided in the justfile. The order of
 8. score-wic-all: Score all simulation datasets with the WiC method (per-pair log-ratios).
 9. analyse-comparative-all: Correlate each method's shift score against the ground-truth diversity shifts (richness/evenness), writing tables and figures to `output/analysis/<dataset>`.
 
+Steps 2–4 and 6–9 cover the first evaluation. The second evaluation reuses the same scoring and analysis code on the DWUG data, and needs the WiC model from step 5:
+
+10. prepare-dwug: Split DWUG EN into per-lemma decade-grouping corpora (`g1` = 1810–1860, `g2` = 1960–2010) under `source_data/dwug_corpora`, writing a preparation report to `source_data/dwug_corpora/tables/dwug_preparation.csv`.
+11. score-dwug-all: Score the DWUG corpora with all three methods into `output/scores/dwug_en`.
+12. analyse-comparative-dwug: Correlate the DWUG shift scores against the DWUG ground truth, writing to `output/analysis/dwug_en`.
+
 Each scoring step compares corpus *pairs* per lemma (source vs. target) and writes a `<method>_pair_scores.csv`; the comparative analysis joins these against the ground-truth `log(qD(T)/qD(S))` shifts for q ∈ {0,1,2}.
+
+The two evaluations differ only in how pairs are enumerated and where the ground-truth sense distribution comes from. Both are selected with `--dataset` (`simulated` or `dwug`) on `score_data.py` and `run_analysis.py`; the simulated grid yields three comparison schemes per lemma, DWUG a single `diachronic` pair.
 
 ## Relevant Literature
 

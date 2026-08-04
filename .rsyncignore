@@ -1,0 +1,5 @@
+**/.python_history
+**/.mypy_cache/
+**/.ruff_cache/
+**/.git/
+**/__pycache__/
