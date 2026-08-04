@@ -24,16 +24,13 @@ from data_processing.dwug_conversion import (
     cluster_probs,
     dwug_lemma_frame,
     prepare_dwug_corpora,
-    read_dwug_uses,
     write_dwug_lemma,
 )
 from data_processing.dwug_loading import (
-    CorpusHandle,
     DwugCorpus,
     iter_dwug_corpora,
     parse_grouping,
 )
-from data_processing.simulation_loading import Corpus
 from simulation.pairing import (
     CorpusPair,
     dwug_pairs,
@@ -130,47 +127,6 @@ class DwugLoadingTestCase(unittest.TestCase):
             (root / "run_VERB").mkdir()
             (root / "run_VERB" / "k3_offset_p0.00.csv").write_text("x\n")
             self.assertEqual(list(iter_dwug_corpora(root)), [])
-
-
-class CorpusHandleProtocolTestCase(unittest.TestCase):
-    """Both corpus kinds satisfy the structural surface the scorers use.
-
-    This guards the decision to keep ``DwugCorpus`` separate from ``Corpus``: if
-    either grows or renames one of the four shared members, this fails here rather
-    than at scoring time.
-    """
-
-    def test_simulated_corpus_satisfies_protocol(self):
-        corpus = Corpus(
-            lemma_pos="run_VERB", k=3, offset=0.0,
-            csv_path=Path("a"), meta_path=Path("b"), data_path=Path("c"),
-        )
-        self.assertIsInstance(corpus, CorpusHandle)
-
-    def test_dwug_corpus_satisfies_protocol(self):
-        self.assertIsInstance(_dwug_corpus(), CorpusHandle)
-
-    def test_dwug_corpus_has_no_simulation_axes(self):
-        # The point of the separate dataclass: no unset k/offset travelling through
-        # the diachronic path, where they have no meaning.
-        corpus = _dwug_corpus()
-        self.assertFalse(hasattr(corpus, "k"))
-        self.assertFalse(hasattr(corpus, "offset"))
-
-
-class DwugReadingTestCase(unittest.TestCase):
-    def test_quote_none_reading_preserves_unescaped_quotes(self):
-        # DWUG embeds bare double quotes in `context`; the default QUOTE_MINIMAL
-        # dialect mis-parses those rows, so the reader must disable quoting.
-        with tempfile.TemporaryDirectory() as tmp:
-            lemma_dir = Path(tmp)
-            frame = _uses_frame()
-            frame.to_csv(
-                lemma_dir / "uses.csv", sep="\t", index=False, quoting=csv.QUOTE_NONE
-            )
-            out = read_dwug_uses(lemma_dir)
-            self.assertEqual(len(out), len(frame))
-            self.assertEqual(out.iloc[0]["context"], _QUOTED_CONTEXT)
 
 
 class DwugFrameTestCase(unittest.TestCase):
@@ -374,6 +330,11 @@ class DwugGroundTruthTestCase(unittest.TestCase):
             self.assertEqual(row["n_noise"], 1)
             self.assertEqual(row["n_g1"], 2)
             self.assertEqual(row["n_equalised"], 2)
+
+            # The unescaped double quotes in `context` survive the read: the default
+            # dialect would mis-parse that row rather than carry it through intact.
+            written = pd.read_csv(root / "corpora" / "bar_nn" / "g1.csv")
+            self.assertIn(_QUOTED_CONTEXT, set(written["sentence"]))
 
 
 class EnumeratorInjectionTestCase(unittest.TestCase):

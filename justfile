@@ -203,10 +203,10 @@ push2flamingo: (_rsync_with_confirm "./" FLAMINGO)
 pull-output: (_rsync_with_confirm "--filter=P_models/" "--filter=P_models/**" (FLAMINGO + "/output/") "./output/")
 
 pull-analysis:
-    rsync -rtvu --progress --exclude-from=../../ignorelist.txt ds858@flamingo.cl.cam.ac.uk:/local/scratch/ds858/wic_shift/output/analysis ./output/
+    rsync -rtvu --progress --exclude-from=.rsyncignore {{ FLAMINGO }}/output/analysis ./output/
 
 pull-models:
-    rsync -rtvu --progress --exclude-from=../../ignorelist.txt ds858@flamingo.cl.cam.ac.uk:/local/scratch/ds858/wic_shift/output/models ./output/
+    rsync -rtvu --progress --exclude-from=.rsyncignore {{ FLAMINGO }}/output/models ./output/
 
 pull-simulated:
-    rsync -rtvu --progress --exclude-from=../../ignorelist.txt ds858@flamingo.cl.cam.ac.uk:/local/scratch/ds858/wic_shift/source_data/simulated_data ./source_data/
+    rsync -rtvu --progress --exclude-from=.rsyncignore {{ FLAMINGO }}/source_data/simulated_data ./source_data/

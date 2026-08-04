@@ -34,7 +34,8 @@ from typing import Callable
 
 import numpy as np
 
-from data_processing.dwug_loading import CorpusHandle, DwugCorpus, iter_dwug_corpora
+from data_processing.dwug_loading import DwugCorpus, iter_dwug_corpora
+from data_processing.shared_loading import CorpusHandle
 from data_processing.simulation_loading import Corpus, iter_corpora
 
 logger = logging.getLogger("div")

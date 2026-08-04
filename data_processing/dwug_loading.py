@@ -1,4 +1,4 @@
-"""Shared loaders over the on-disk DWUG corpus layout.
+"""Loaders over the on-disk DWUG corpus layout.
 
 ``prepare_dwug_corpora`` materialises DWUG EN into the same directory shape the
 simulation uses -- ``<lemma>_<pos>/{g1,g2}.csv`` with sibling ``.meta.json`` and
@@ -7,16 +7,14 @@ This module is the DWUG counterpart of :mod:`data_processing.simulation_loading`
 it enumerates those corpora and parses a grouping stem.
 
 DWUG corpora are kept a *separate* type from the simulated :class:`Corpus` rather
-than a variant of it. A simulated corpus is identified by its design axes (k, slope
-offset); a DWUG corpus is identified by its decade grouping, and has no design
-distribution at all. Sharing one dataclass would mean carrying two unset fields
-through the simulation path and two more through the diachronic one.
+than a variant of it. A DWUG corpus is identified by its decade grouping, and has no design
+distribution at all. 
 """
 
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Protocol, runtime_checkable
+from typing import Iterator
 
 # Grouping stems written by the converter. Source is the *older* corpus here (readme
 # "Second Evaluation"), unlike the simulation where source is the least diverse one.
@@ -24,35 +22,6 @@ SOURCE_STEM = "g1"  # 1810-1860
 TARGET_STEM = "g2"  # 1960-2010
 
 _GROUPING_RE = re.compile(r"^g(?P<grouping>[12])$")
-
-
-@runtime_checkable
-class CorpusHandle(Protocol):
-    """The on-disk surface every scorer needs from a corpus.
-
-    :class:`~data_processing.simulation_loading.Corpus` and :class:`DwugCorpus` both
-    satisfy this structurally, so :class:`~simulation.pairing.CorpusPair` can hold
-    either kind and the ``score_pair_*`` functions work for both. Those functions read
-    nothing beyond these four members -- notably not ``k``/``offset``, which are
-    simulation-only.
-
-    The members are declared as read-only ``@property`` rather than bare annotations
-    on purpose: a protocol with plain attribute members is invariant and requires the
-    attribute to be *settable*, which neither frozen dataclass provides. Simplifying
-    these to ``lemma_pos: str`` would stop both corpus types matching.
-    """
-
-    @property
-    def lemma_pos(self) -> str: ...
-
-    @property
-    def csv_path(self) -> Path: ...
-
-    @property
-    def meta_path(self) -> Path: ...
-
-    @property
-    def data_path(self) -> Path: ...
 
 
 @dataclass(frozen=True)

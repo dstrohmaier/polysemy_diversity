@@ -16,7 +16,7 @@ import seaborn as sns  # type: ignore
 from scipy.stats import bootstrap, spearmanr  # type: ignore
 
 from analysis.io import save_fig
-from data_processing.dwug_loading import CorpusHandle
+from data_processing.shared_loading import CorpusHandle
 from data_processing.simulation_loading import iter_corpora
 from simulation.diversity import STANDARD_ORDERS, diversity_shift
 

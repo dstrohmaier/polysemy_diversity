@@ -37,8 +37,7 @@ logger = logging.getLogger("div")
 # DWUG marks usages its optimal clustering left unassigned (noise) with -1. They carry
 # no sense label, so they are dropped from both the ground truth and the data the
 # scorers see. Dropping them exactly reproduces DWUG's own
-# stats/opt/stats_groupings.csv cluster_freq_dist1/2 columns, which is the external
-# check that this rule is the right one.
+# stats/opt/stats_groupings.csv cluster_freq_dist1/2 columns.
 NOISE_CLUSTER = -1
 
 # Both scorers need at least two usages: loo_centroid_distance asserts n >= 2, and
@@ -51,27 +50,6 @@ GROUPING_STEMS = {1: SOURCE_STEM, 2: TARGET_STEM}
 
 # Columns of the simulated-corpus schema, in order.
 CORPUS_COLUMNS = ["lemma", "pos", "sense", "sentence", "start", "end"]
-
-
-def read_dwug_uses(lemma_dir: Path) -> pd.DataFrame:
-    """Read one lemma's ``uses.csv``.
-
-    DWUG's TSVs embed unescaped double quotes inside ``context`` (quoted speech in the
-    source texts). The csv module's default QUOTE_MINIMAL dialect reads those as field
-    quoting and mis-parses the row -- pandas then raises a ParserError complaining of
-    the wrong field count. ``quoting=csv.QUOTE_NONE`` disables quote processing
-    altogether, which is safe because no context contains a tab or a newline (verified
-    across all 9107 usages).
-    """
-    return pd.read_csv(lemma_dir / "uses.csv", sep="\t", quoting=csv.QUOTE_NONE)
-
-
-def read_dwug_clusters(clusters_dir: Path, lemma_pos: str) -> pd.DataFrame:
-    """Read one lemma's optimal clustering (``identifier`` -> ``cluster``).
-
-    Unlike ``uses.csv`` this file holds no free text, so ordinary TSV parsing works.
-    """
-    return pd.read_csv(clusters_dir / f"{lemma_pos}.csv", sep="\t")
 
 
 def _target_span(indexes_target_token: str) -> tuple[int, int]:
@@ -106,7 +84,7 @@ def dwug_lemma_frame(
       lemma.
 
     Noise rows (``cluster == -1``) are dropped: DWUG's clustering assigned them no
-    sense, so they can carry neither a ground-truth probability nor a WiC label.
+    sense.
     """
     merged = uses.merge(clusters, on="identifier", how="inner")
     # A DWUG release whose clustering does not cover every usage would silently shrink
@@ -268,8 +246,10 @@ def prepare_dwug_corpora(
     rows = []
     for lemma_dir in sorted(p for p in data_dir.iterdir() if p.is_dir()):
         lemma_pos = lemma_dir.name
-        uses = read_dwug_uses(lemma_dir)
-        clusters = read_dwug_clusters(clusters_dir, lemma_pos)
+        # uses.csv embeds unescaped double quotes in `context`, which the default
+        # dialect mis-parses; QUOTE_NONE is safe as no context holds a tab or newline.
+        uses = pd.read_csv(lemma_dir / "uses.csv", sep="\t", quoting=csv.QUOTE_NONE)
+        clusters = pd.read_csv(clusters_dir / f"{lemma_pos}.csv", sep="\t")
         raw_sizes = {
             g: int((uses["grouping"].astype(int) == g).sum()) for g in GROUPING_STEMS
         }
@@ -277,13 +257,15 @@ def prepare_dwug_corpora(
         frame = dwug_lemma_frame(uses, clusters, lemma_pos)
         written = write_dwug_lemma(frame, lemma_pos, output_dir, raw_sizes, seed=seed)
 
+        n_g1 = int((frame["grouping"] == 1).sum())
+        n_g2 = int((frame["grouping"] == 2).sum())
         row = {
             "lemma_pos": lemma_pos,
             "n_raw_g1": raw_sizes[1],
             "n_raw_g2": raw_sizes[2],
             "n_noise": int(len(uses) - len(frame)),
-            "n_g1": int((frame["grouping"] == 1).sum()),
-            "n_g2": int((frame["grouping"] == 2).sum()),
+            "n_g1": n_g1,
+            "n_g2": n_g2,
             "written": written,
         }
         if written:
@@ -291,7 +273,7 @@ def prepare_dwug_corpora(
             probs_t = cluster_probs(frame, 2)
             row["k_g1"] = len(probs_s)
             row["k_g2"] = len(probs_t)
-            row["n_equalised"] = min(row["n_g1"], row["n_g2"])
+            row["n_equalised"] = min(n_g1, n_g2)
             for q in STANDARD_ORDERS:
                 row[f"gt_shift_q{q}"] = diversity_shift(probs_s, probs_t, q)
         rows.append(row)
