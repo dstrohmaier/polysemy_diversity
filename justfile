@@ -77,6 +77,16 @@ score-vmf-all:
         just score-vmf "$sim_dir" "output/scores/$name"
     done
 
+score-cosine sim_dir output_dir model="answerdotai/ModernBERT-large" $CUDA_VISIBLE_DEVICES=gpu:
+    python score_data.py cosine {{ sim_dir }} {{ output_dir }} --hf-model-name "{{ model }}"
+
+score-cosine-all:
+    #!/usr/bin/env bash
+    for sim_dir in source_data/simulated_data/*/; do
+        name=$(basename "$sim_dir")
+        just score-cosine "$sim_dir" "output/scores/$name"
+    done
+
 # --- Analysis
 
 analyse-raw-simulated sim_dir output_dir:
@@ -99,26 +109,6 @@ analyse-wic-simulated-all:
         just analyse-wic-simulated "$sim_dir" "output/analysis/$name"
     done
 
-analyse-vmf-scored scores_dir sim_dir output_dir:
-    python run_analysis.py vmf_scored {{ scores_dir }} {{ output_dir }} {{ sim_dir }}
-
-analyse-vmf-scored-all:
-    #!/usr/bin/env bash
-    for sim_dir in source_data/simulated_data/*/; do
-        name=$(basename "$sim_dir")
-        just analyse-vmf-scored "output/scores/$name" "$sim_dir" "output/analysis/$name"
-    done
-
-analyse-wic-scored scores_dir sim_dir output_dir:
-    python run_analysis.py wic_scored {{ scores_dir }} {{ output_dir }} {{ sim_dir }}
-
-analyse-wic-scored-all:
-    #!/usr/bin/env bash
-    for sim_dir in source_data/simulated_data/*/; do
-        name=$(basename "$sim_dir")
-        just analyse-wic-scored "output/scores/$name" "$sim_dir" "output/analysis/$name"
-    done
-
 analyse-comparative scores_dir sim_dir output_dir:
     python run_analysis.py comparative {{ scores_dir }} {{ output_dir }} {{ sim_dir }}
 
@@ -131,12 +121,6 @@ analyse-comparative-all:
 
 # Globs on the output side (not simulated_data) so results of datasets whose sim
 # dirs have since been removed are cleaned up too.
-clean-vmf-scored-all:
-    rm -rf output/analysis/*/vmf_scored
-
-clean-wic-scored-all:
-    rm -rf output/analysis/*/wic_scored
-
 clean-comparative-all:
     rm -rf output/analysis/*/comparative
 

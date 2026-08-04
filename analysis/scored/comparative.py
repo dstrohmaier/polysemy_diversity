@@ -1,20 +1,15 @@
-"""Comparative analysis of vMF and WiC scoring (``vmf_scores.csv`` + ``wic_scores.csv``).
+"""Comparative analysis of the shift-in-diversity scores.
 
-vMF (``vmf_kappa``) and WiC (``wic_p_diff_mean``) each get their own scored-mode
-analysis (:mod:`analysis.scored.vmf_scored`, :mod:`analysis.scored.wic_scored`), but
-neither puts the two side by side. This module does two comparative things:
+Each method writes a per-pair log-ratio score (``vmf_pair_scores.csv``,
+``wic_pair_scores.csv``, ``cosine_pair_scores.csv``), all oriented so that a
+positive value means the target corpus is more diverse than the source. This module
+correlates each method's log-ratio against the ground-truth diversity *shift*
+``log(qD(T)/qD(S))`` for the three Hill orders q in {0, 1, 2} (richness, Shannon,
+Simpson), using Spearman's rho with bootstrap CIs, grouped by comparison scheme.
 
-* how well each method's score tracks the two ground-truth design properties (sense
-  entropy, Zipfian slope), conditional on k -- one Spearman rho per (method, k,
-  predictor), reusing :func:`~analysis.scored.stats.correlation_table` for each
-  method in turn. vMF concentration and WiC P(diff) move in opposite directions
-  relative to sense diversity (high kappa = low diversity, high P(diff) = high
-  diversity), so rho signs are expected to be opposite; an ``expected_sign`` column
-  is attached rather than transforming either score;
-* WiC's own "performance penalty" -- the gap between its empirical rho
-  (``wic_p_diff_mean`` vs. a predictor) and its theoretical ceiling rho
-  (``p_diff_theoretical`` vs. the same predictor). vMF has no probability output and
-  so has no theoretical-ceiling analogue; this half of the analysis is WiC-only.
+Because all methods and all ground-truth shifts share the same orientation
+(positive = target more diverse), the expected rho sign is ``+1`` throughout -- no
+per-method sign bookkeeping is needed (unlike the earlier absolute-score analysis).
 """
 
 import logging
@@ -25,29 +20,25 @@ import pandas as pd  # type: ignore
 import seaborn as sns  # type: ignore
 
 from analysis.io import save_fig, write_table
-from analysis.scored.stats import correlation_table, merge_entropy
+from analysis.scored.stats import (
+    GT_SHIFT_COLS,
+    correlation_table,
+    pair_ground_truth,
+    score_scatter,
+)
 
 logger = logging.getLogger("div")
 
-VMF_SCORE_COL = "vmf_kappa"
-WIC_SCORE_COL = "wic_p_diff_mean"
-THEORETICAL_COL = "p_diff_theoretical"
-PREDICTORS = ["entropy_bits", "applied_slope"]
-
-# vMF concentration falls where WiC P(diff) rises (and vice versa) for the same
-# ground-truth predictor, since kappa measures concentration (low diversity) while
-# P(diff) measures diversity directly.
-_EXPECTED_SIGN = {
-    ("vMF", "entropy_bits"): -1,
-    ("vMF", "applied_slope"): 1,
-    ("WiC (empirical)", "entropy_bits"): 1,
-    ("WiC (empirical)", "applied_slope"): -1,
-    ("WiC (empirical)", THEORETICAL_COL): 1,
-    ("WiC (theoretical)", "entropy_bits"): 1,
-    ("WiC (theoretical)", "applied_slope"): -1,
+# Method name -> (scoring subdir, pair-scores filename, log-ratio column). The
+# subdir/filename must match score_data.py's output layout; keeping all three in one
+# place stops the subdir drifting out of sync with the filename.
+_METHODS = {
+    "cosine": ("cosine", "cosine_pair_scores.csv", "cosine_log_ratio"),
+    "vMF": ("vmf", "vmf_pair_scores.csv", "vmf_log_ratio"),
+    "WiC": ("wic", "wic_pair_scores.csv", "wic_log_ratio"),
 }
-
-_METHOD_ORDER = ["vMF", "WiC (empirical)", "WiC (theoretical)"]
+_METHOD_ORDER = ["cosine", "vMF", "WiC"]
+_GT_COLS = list(GT_SHIFT_COLS.values())
 
 
 def _method_palette() -> dict[str, tuple]:
@@ -55,103 +46,69 @@ def _method_palette() -> dict[str, tuple]:
     return dict(zip(_METHOD_ORDER, sns.color_palette("colorblind", len(_METHOD_ORDER))))
 
 
-def comparative_correlation_table(
-    vmf_df: pd.DataFrame | None, wic_df: pd.DataFrame | None
-) -> pd.DataFrame:
-    """Spearman rho of each method's score vs. entropy/slope, conditional on k.
+def _load_method(scores_dir: Path, method: str, sim_dir: Path) -> pd.DataFrame | None:
+    """Load one method's pair scores with ground-truth shift columns attached.
 
-    One row per ``(method, k_senses, predictor)``: vMF's ``vmf_kappa``, WiC's
-    empirical ``wic_p_diff_mean``, and WiC's theoretical ``p_diff_theoretical`` (its
-    ceiling, since a perfect WiC model would predict exactly that value). The WiC
-    empirical row set also includes ``p_diff_theoretical`` as a predictor (matching
-    :mod:`analysis.scored.wic_scored`'s existing calibration angle), even though it
-    is near-collinear with ``entropy_bits`` -- both are reported rather than
-    collapsed, consistent with the existing per-method tables.
+    Returns ``None`` (with a warning) if the method's pair-scores CSV is absent, so
+    the comparative analysis degrades gracefully when only some methods have run.
+    """
+    subdir, filename, _ = _METHODS[method]
+    path = scores_dir / subdir / filename
+    if not path.exists():
+        logger.warning("No %s at %s; %s excluded from comparison.", filename, path, method)
+        return None
+    return pair_ground_truth(pd.read_csv(path), sim_dir)
+
+
+def shift_correlation_table(loaded: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Spearman rho of each method's log-ratio vs each ground-truth shift, by scheme.
+
+    One row per ``(method, scheme, gt_shift_q)`` with rho, bootstrap CI, and n.
+    Reuses :func:`~analysis.scored.stats.correlation_table` per method (grouping on
+    the comparison ``scheme`` and treating the three ``gt_shift_q`` columns as the
+    predictors).
     """
     parts = []
-
-    if vmf_df is not None:
-        vmf_corr = correlation_table(vmf_df, VMF_SCORE_COL, PREDICTORS)
-        vmf_corr.insert(0, "method", "vMF")
-        parts.append(vmf_corr)
-
-    if wic_df is not None:
-        wic_emp = correlation_table(wic_df, WIC_SCORE_COL, PREDICTORS + [THEORETICAL_COL])
-        wic_emp.insert(0, "method", "WiC (empirical)")
-        parts.append(wic_emp)
-
-        wic_theo = correlation_table(wic_df, THEORETICAL_COL, PREDICTORS)
-        wic_theo.insert(0, "method", "WiC (theoretical)")
-        parts.append(wic_theo)
+    for method in _METHOD_ORDER:
+        df = loaded.get(method)
+        if df is None:
+            continue
+        *_, score_col = _METHODS[method]
+        corr = correlation_table(df, score_col, _GT_COLS, group_col="scheme")
+        corr.insert(0, "method", method)
+        parts.append(corr)
 
     if not parts:
         return pd.DataFrame(
-            columns=["method", "k_senses", "predictor", "expected_sign",
-                     "spearmanr", "ci_low", "ci_high", "n"]
+            columns=["method", "scheme", "predictor", "spearmanr", "ci_low", "ci_high", "n"]
         )
-
-    corr = pd.concat(parts, ignore_index=True)
-    corr["expected_sign"] = [
-        _EXPECTED_SIGN.get((m, p)) for m, p in zip(corr["method"], corr["predictor"])
-    ]
-    return corr[["method", "k_senses", "predictor", "expected_sign",
-                 "spearmanr", "ci_low", "ci_high", "n"]]
+    return pd.concat(parts, ignore_index=True)
 
 
-def penalty_table(corr: pd.DataFrame) -> pd.DataFrame:
-    """WiC's empirical-vs-theoretical rho gap: the model's performance penalty.
+def _plot_rho_by_scheme(corr: pd.DataFrame, gt_col: str, figures_dir: Path, name: str) -> None:
+    """Dot plot of Spearman rho against comparison scheme, one colour per method.
 
-    For each ``(k_senses, predictor)`` present in both the "WiC (empirical)" and
-    "WiC (theoretical)" rows of ``corr``, ``penalty = rho_theoretical -
-    rho_empirical``: how much rank-correlation the model's imperfection costs
-    relative to what a perfectly-calibrated WiC model would achieve. Both rows' own
-    bootstrap CIs are carried alongside rather than composed into a new CI for the
-    difference.
+    x = scheme, y = rho, colour = method, CI error bars -- the dot-plot convention
+    used across the scored figures (not a heatmap).
     """
-    emp = corr[corr["method"] == "WiC (empirical)"]
-    theo = corr[corr["method"] == "WiC (theoretical)"]
-    merged = emp.merge(
-        theo, on=["k_senses", "predictor"], suffixes=("_empirical", "_theoretical")
-    )
-    if merged.empty:
-        return pd.DataFrame(
-            columns=["k_senses", "predictor", "spearmanr_empirical", "ci_low_empirical",
-                     "ci_high_empirical", "spearmanr_theoretical", "ci_low_theoretical",
-                     "ci_high_theoretical", "penalty"]
-        )
-    merged["penalty"] = merged["spearmanr_theoretical"] - merged["spearmanr_empirical"]
-    return merged[
-        ["k_senses", "predictor", "spearmanr_empirical", "ci_low_empirical",
-         "ci_high_empirical", "spearmanr_theoretical", "ci_low_theoretical",
-         "ci_high_theoretical", "penalty"]
-    ]
-
-
-def _plot_rho_vs_k(corr: pd.DataFrame, predictor: str, figures_dir: Path, name: str) -> None:
-    """Dot plot of Spearman rho against k, one colour per method, CI error bars.
-
-    A small categorical/jittered dot plot (not a heatmap): x = k_senses, y = rho,
-    colour = method, matching the errorbar convention used for WiC performance
-    plots (:func:`analysis.scored.wic_scored._plot_performance`).
-    """
-    sub = corr[corr["predictor"] == predictor].copy()
+    sub = corr[corr["predictor"] == gt_col].copy()
     if sub.empty:
         return
     palette = _method_palette()
     methods = [m for m in _METHOD_ORDER if m in sub["method"].unique()]
+    schemes = sorted(sub["scheme"].unique())
 
     fig, ax = plt.subplots()
-    ks = sorted(sub["k_senses"].unique())
     width = 0.8 / max(len(methods), 1)
     for i, method in enumerate(methods):
-        grp = sub[sub["method"] == method].sort_values("k_senses")
-        xs = [ks.index(k) + (i - (len(methods) - 1) / 2) * width for k in grp["k_senses"]]
+        grp = sub[sub["method"] == method].set_index("scheme").reindex(schemes).reset_index()
+        xs = [schemes.index(s) + (i - (len(methods) - 1) / 2) * width for s in grp["scheme"]]
         yerr = [grp["spearmanr"] - grp["ci_low"], grp["ci_high"] - grp["spearmanr"]]
         ax.errorbar(xs, grp["spearmanr"], yerr=yerr, marker="o", linestyle="none",
                     capsize=3, color=palette[method], label=method)
-    ax.set_xticks(range(len(ks)))
-    ax.set_xticklabels([str(k) for k in ks])
-    ax.set_xlabel("Number of senses (k)")
+    ax.set_xticks(range(len(schemes)))
+    ax.set_xticklabels(schemes)
+    ax.set_xlabel("Comparison scheme")
     ax.set_ylabel("Spearman's rho")
     ax.axhline(0, color="grey", linewidth=0.8, linestyle=":")
     ax.legend(title="method", fontsize="small")
@@ -159,48 +116,33 @@ def _plot_rho_vs_k(corr: pd.DataFrame, predictor: str, figures_dir: Path, name: 
 
 
 def analyse_comparative(scores_dir: Path, sim_dir: Path, out_root: Path) -> None:
-    """Compare vMF and WiC scores in ``scores_dir`` against the corpora in ``sim_dir``."""
+    """Compare the methods' shift scores against the ground-truth diversity shifts."""
     tables_dir = out_root / "tables"
     figures_dir = out_root / "figures"
 
-    vmf_path = scores_dir / "vmf" / "vmf_scores.csv"
-    wic_path = scores_dir / "wic" / "wic_scores.csv"
-
-    vmf_df = None
-    if vmf_path.exists():
-        vmf_df = merge_entropy(pd.read_csv(vmf_path), sim_dir)
-    else:
-        logger.warning(
-            "No vmf_scores.csv at %s; comparative analysis will be WiC-only. "
-            "Run score_data.py vmf first.",
-            vmf_path,
-        )
-
-    wic_df = None
-    if wic_path.exists():
-        wic_df = merge_entropy(pd.read_csv(wic_path), sim_dir)
-    else:
-        logger.warning(
-            "No wic_scores.csv at %s; comparative analysis will be vMF-only. "
-            "Run score_data.py wic first.",
-            wic_path,
-        )
-
-    if vmf_df is None and wic_df is None:
-        logger.warning("Neither vmf_scores.csv nor wic_scores.csv found; nothing to analyse.")
+    loaded = {m: _load_method(scores_dir, m, sim_dir) for m in _METHOD_ORDER}
+    loaded = {m: df for m, df in loaded.items() if df is not None}
+    if not loaded:
+        logger.warning("No method pair-scores found under %s; nothing to analyse.", scores_dir)
         return
 
-    corr = comparative_correlation_table(vmf_df, wic_df)
-    write_table(corr, tables_dir, "comparative_correlations", convert_col_names=True)
+    corr = shift_correlation_table(loaded)
+    write_table(corr, tables_dir, "shift_correlations", convert_col_names=True)
 
-    penalty = penalty_table(corr)
-    write_table(penalty, tables_dir, "comparative_wic_penalty", convert_col_names=True)
+    # Per-pair scatter of each method's log-ratio against each ground-truth shift.
+    for method, df in loaded.items():
+        *_, score_col = _METHODS[method]
+        for q, gt_col in GT_SHIFT_COLS.items():
+            score_scatter(
+                df, gt_col, f"Ground-truth shift log(qD_T/qD_S), q={q}",
+                score_col, f"{method} log-ratio", figures_dir,
+                f"{method}_shift_vs_gt_q{q}", hue_col="scheme",
+            )
 
-    _plot_rho_vs_k(corr, "entropy_bits", figures_dir, "comparative_rho_vs_k_entropy")
-    _plot_rho_vs_k(corr, "applied_slope", figures_dir, "comparative_rho_vs_k_slope")
+    for q, gt_col in GT_SHIFT_COLS.items():
+        _plot_rho_by_scheme(corr, gt_col, figures_dir, f"comparative_rho_by_scheme_q{q}")
 
     logger.info(
         "comparative: %d correlation rows across %d method(s)",
-        len(corr),
-        corr["method"].nunique(),
+        len(corr), corr["method"].nunique(),
     )

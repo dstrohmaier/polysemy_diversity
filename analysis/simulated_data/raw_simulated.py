@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns  # type: ignore
 
 from analysis.io import save_fig, write_csv, write_table
-from data_processing.wic_conversion import Corpus, iter_corpora
+from data_processing.simulation_loading import Corpus, iter_corpora
 
 logger = logging.getLogger("div")
 

@@ -1,8 +1,16 @@
 import unittest
 from unittest import mock
+from pathlib import Path
 
 import numpy as np
 
+import pandas as pd
+
+from analysis.scored.stats import correlation_table
+from cosine.cosine_estimation import loo_centroid_distance
+from data_processing.simulation_loading import Corpus
+from simulation.diversity import diversity_shift, hill_diversity
+from simulation.pairing import enumerate_pairs, equalise_indices
 from vmf.vmf_estimation import _estimate_kappa, estimate_vmf_parameters
 from wic.wic_estimation import score_corpus_wic
 
@@ -163,6 +171,230 @@ class WiCScoringTestCase(unittest.TestCase):
     def test_empty_entries_rejected(self):
         with self.assertRaises(AssertionError):
             score_corpus_wic([], trainer=None, tokenizer=None, meta=_META)
+
+
+class HillDiversityTestCase(unittest.TestCase):
+    def test_q0_is_richness(self):
+        # q=0 counts the senses with non-zero probability, ignoring their weights.
+        self.assertEqual(hill_diversity({"a": 0.9, "b": 0.05, "c": 0.05}, 0), 3.0)
+
+    def test_q0_drops_zero_probability_senses(self):
+        self.assertEqual(hill_diversity({"a": 0.5, "b": 0.5, "c": 0.0}, 0), 2.0)
+
+    def test_q2_is_inverse_simpson(self):
+        probs = {"a": 0.6, "b": 0.3, "c": 0.1}
+        expected = 1.0 / sum(p * p for p in probs.values())
+        self.assertAlmostEqual(hill_diversity(probs, 2), expected)
+
+    def test_q1_uniform_equals_support(self):
+        # Shannon diversity of a uniform distribution over k senses is exactly k.
+        self.assertAlmostEqual(hill_diversity([0.25] * 4, 1), 4.0)
+
+    def test_diversity_more_even_is_more_diverse(self):
+        skewed = {"a": 0.8, "b": 0.1, "c": 0.1}
+        even = {"a": 1 / 3, "b": 1 / 3, "c": 1 / 3}
+        for q in (1, 2):
+            self.assertLess(hill_diversity(skewed, q), hill_diversity(even, q))
+
+    def test_shift_identical_is_zero(self):
+        probs = {"a": 0.7, "b": 0.3}
+        for q in (0, 1, 2):
+            self.assertEqual(diversity_shift(probs, probs, q), 0.0)
+
+    def test_shift_positive_when_target_more_diverse(self):
+        source = {"a": 0.8, "b": 0.2}
+        target = {"a": 0.5, "b": 0.5}
+        self.assertGreater(diversity_shift(source, target, 2), 0.0)
+
+
+def _corpus(lemma_pos, k, offset):
+    """A Corpus handle with the on-disk variant stem the pairing logic reads."""
+    stem = f"k{k}_offset_{'m' if offset < 0 else 'p'}{abs(offset):.2f}"
+    return Corpus(
+        lemma_pos=lemma_pos,
+        k=k,
+        offset=offset,
+        csv_path=Path(f"{lemma_pos}/{stem}.csv"),
+        meta_path=Path("x"),
+        data_path=Path("y"),
+    )
+
+
+class PairingTestCase(unittest.TestCase):
+    def setUp(self):
+        # One lemma, k in {3, 4}, offset in {-0.1, 0.0, 0.1}.
+        self.corpora = [
+            _corpus("run_VERB", k, o) for k in (3, 4) for o in (-0.1, 0.0, 0.1)
+        ]
+        self.pairs = enumerate_pairs(self.corpora)
+
+    def test_primary_source_is_low_diversity_anchor(self):
+        # Every "primary" pair sources from the lowest-k, steepest-slope corpus.
+        primary = [p for p in self.pairs if p.scheme == "primary"]
+        self.assertTrue(
+            all(p.source.csv_path.stem == "k3_offset_m0.10" for p in primary)
+        )
+        self.assertEqual(len(primary), len(self.corpora) - 1)
+
+    def test_along_slope_source_is_steeper(self):
+        # Same k, so the source (lower diversity) has the smaller offset.
+        for p in (p for p in self.pairs if p.scheme == "along_slope"):
+            self.assertEqual(p.source.k, p.target.k)
+            self.assertLess(p.source.offset, p.target.offset)
+
+    def test_along_k_source_has_lower_k(self):
+        for p in (p for p in self.pairs if p.scheme == "along_k"):
+            self.assertEqual(p.source.offset, p.target.offset)
+            self.assertLess(p.source.k, p.target.k)
+
+    def test_single_corpus_lemma_yields_no_pairs(self):
+        self.assertEqual(enumerate_pairs([_corpus("lone_NOUN", 3, 0.0)]), [])
+
+    def test_duplicate_variant_skipped_not_crashed(self):
+        # Two files parsing to the same (k, offset) must not abort the run; the
+        # degenerate neighbour pair is skipped, other pairs still produced.
+        dupes = [
+            _corpus("dup_VERB", 3, 0.0),
+            _corpus("dup_VERB", 3, 0.0),
+            _corpus("dup_VERB", 4, 0.0),
+        ]
+        pairs = enumerate_pairs(dupes)  # must not raise
+        # The k3->k4 comparison still exists; no pair has identical endpoints.
+        self.assertTrue(any(p.source.k != p.target.k for p in pairs))
+        for p in pairs:
+            self.assertFalse(p.source.k == p.target.k and p.source.offset == p.target.offset)
+
+
+class CorrelationTableTestCase(unittest.TestCase):
+    """The degenerate-predictor guard: a constant predictor (e.g. the q=0 richness
+    shift within a same-k scheme) must be flagged, not silently NaN'd via scipy."""
+
+    def _df(self, scores, predictor_vals, group="along_slope"):
+        return pd.DataFrame(
+            {"scheme": [group] * len(scores), "score": scores, "gt": predictor_vals}
+        )
+
+    def test_constant_predictor_flagged(self):
+        # gt is identically 0 (the q0 same-k case): rho undefined, note explains why.
+        df = self._df([0.1, 0.4, 0.9], [0.0, 0.0, 0.0])
+        out = correlation_table(df, "score", ["gt"], group_col="scheme")
+        row = out.iloc[0]
+        self.assertTrue(np.isnan(row["spearmanr"]))
+        self.assertEqual(row["note"], "constant predictor")
+        self.assertEqual(row["n"], 3)
+
+    def test_small_sample_flagged_distinctly(self):
+        # Fewer than three points: a different, non-degenerate reason.
+        df = self._df([0.1, 0.4], [0.2, 0.5])
+        out = correlation_table(df, "score", ["gt"], group_col="scheme")
+        self.assertEqual(out.iloc[0]["note"], "n<3")
+
+    def test_varying_predictor_correlates(self):
+        # A clean monotone case still produces a finite rho and empty note.
+        df = self._df([0.1, 0.4, 0.9], [0.2, 0.5, 0.8])
+        out = correlation_table(df, "score", ["gt"], group_col="scheme")
+        row = out.iloc[0]
+        self.assertAlmostEqual(row["spearmanr"], 1.0)
+        self.assertEqual(row["note"], "")
+
+
+def _naive_loo_centroid_distance(vectors: np.ndarray) -> float:
+    """O(n^2) reference: recompute each leave-one-out centroid explicitly.
+
+    Deliberately literal (loop + delete row + mean + normalise) so it validates the
+    vectorised ``S - x_i`` identity in loo_centroid_distance rather than mirroring it.
+    """
+    n = len(vectors)
+    terms = []
+    for i in range(n):
+        others = np.delete(vectors, i, axis=0)
+        centroid = others.mean(axis=0)
+        centroid = centroid / np.linalg.norm(centroid)
+        terms.append(1.0 - float(vectors[i] @ centroid))
+    return float(np.mean(terms))
+
+
+def _unit_rows(arr) -> np.ndarray:
+    """L2-normalise each row (the extractor's precondition for the functional)."""
+    arr = np.asarray(arr, dtype=float)
+    return arr / np.linalg.norm(arr, axis=1, keepdims=True)
+
+
+class CosineDiversityTestCase(unittest.TestCase):
+    def test_identical_vectors_give_zero(self):
+        # Every LOO centroid points the same way as the held-out vector -> cos 1 -> 0.
+        vecs = np.tile([1.0, 0.0, 0.0], (5, 1))
+        self.assertAlmostEqual(loo_centroid_distance(vecs), 0.0)
+
+    def test_spread_exceeds_tight_cluster(self):
+        # The property the baseline relies on: more-dispersed usages score higher.
+        rng = np.random.default_rng(0)
+        centre = np.array([1.0, 0.0, 0.0])
+        tight = _unit_rows(centre + 0.05 * rng.standard_normal((50, 3)))
+        spread = _unit_rows(centre + 0.8 * rng.standard_normal((50, 3)))
+        self.assertGreater(
+            loo_centroid_distance(spread), loo_centroid_distance(tight)
+        )
+
+    def test_matches_naive_reference(self):
+        # The key correctness guard: the O(n*d) closed form equals the explicit
+        # leave-one-out computation on an asymmetric, non-trivial cloud.
+        rng = np.random.default_rng(1)
+        vecs = _unit_rows(rng.standard_normal((40, 8)))
+        self.assertAlmostEqual(
+            loo_centroid_distance(vecs), _naive_loo_centroid_distance(vecs), places=10
+        )
+
+    def test_n_equals_two_is_pair_distance(self):
+        # With n == 2 the "others" centroid is just the single other vector, so each
+        # term is 1 - cos(x_0, x_1); the mean equals that one distance.
+        vecs = _unit_rows([[1.0, 0.0], [0.0, 1.0]])  # orthogonal -> cos 0 -> dist 1
+        self.assertAlmostEqual(loo_centroid_distance(vecs), 1.0)
+
+    def test_returns_plain_float(self):
+        vecs = _unit_rows(np.random.default_rng(2).standard_normal((6, 4)))
+        self.assertIsInstance(loo_centroid_distance(vecs), float)
+
+    def test_too_few_vectors_asserts(self):
+        with self.assertRaises(AssertionError):
+            loo_centroid_distance(_unit_rows([[1.0, 0.0, 0.0]]))
+
+
+class EqualiseIndicesTestCase(unittest.TestCase):
+    def test_both_indices_trim_to_smaller(self):
+        idx_a, idx_b = equalise_indices(10, 3, seed=1)
+        self.assertEqual(len(idx_a), 3)
+        self.assertEqual(len(idx_b), 3)
+
+    def test_smaller_side_is_full_identity(self):
+        # The shorter side keeps every row, in order (arange), so the caller's
+        # unchanged data passes through untouched.
+        idx_a, idx_b = equalise_indices(10, 3, seed=1)
+        np.testing.assert_array_equal(idx_b, np.arange(3))
+        # The trimmed side's indices are a sorted subset of its range.
+        self.assertTrue(set(idx_a.tolist()) <= set(range(10)))
+        self.assertEqual(list(idx_a), sorted(idx_a))
+
+    def test_indices_apply_to_array_and_list_alike(self):
+        # The point of the index-based API: one index set, applied to either an
+        # array of vectors (vMF) or a list of pair dicts (WiC).
+        vecs = np.arange(20).reshape(10, 2)
+        dicts = [{"i": i} for i in range(10)]
+        idx_a, _ = equalise_indices(10, 4, seed=2)
+        kept_vecs = vecs[idx_a]
+        kept_dicts = [dicts[i] for i in idx_a]
+        self.assertEqual(len(kept_vecs), 4)
+        self.assertEqual([d["i"] for d in kept_dicts], idx_a.tolist())
+
+    def test_equal_length_is_identity_both_sides(self):
+        idx_a, idx_b = equalise_indices(3, 3, seed=1)
+        np.testing.assert_array_equal(idx_a, np.arange(3))
+        np.testing.assert_array_equal(idx_b, np.arange(3))
+
+    def test_deterministic_under_seed(self):
+        first, _ = equalise_indices(10, 3, seed=42)
+        second, _ = equalise_indices(10, 3, seed=42)
+        np.testing.assert_array_equal(first, second)
 
 
 if __name__ == "__main__":

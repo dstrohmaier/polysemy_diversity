@@ -1,14 +1,17 @@
-"""Score simulated corpora, either with a von Mises-Fisher concentration (kappa)
-or with a trained WiC sequence-classification model.
+"""Score simulated corpus *pairs* with a shift-in-diversity measure.
 
-For every simulated corpus under SIM_DIR (the ``<lemma>_<pos>/k*_offset_*.csv``
+Every method scores a (source, target) corpus pair of the same lemma and reports a
+log-ratio that is positive when the target is more diverse (see the readme). Pairs
+are enumerated per lemma across three comparison schemes (see
+:mod:`simulation.pairing`). For every SIM_DIR (the ``<lemma>_<pos>/k*_offset_*.csv``
 layout produced by simulate_data.py):
 
-* ``vmf``  -- the target word's contextual embeddings are extracted with a
-  transformer model and a single vMF kappa is fitted. Writes ``vmf_scores.csv``.
-* ``wic``  -- a trained WiC model judges every sentence pair (read from the sibling
-  ``.data`` files) and we record the probability that the two occurrences differ in
-  sense. Writes a per-corpus ``wic_scores.csv`` and a per-pair ``wic_pair_scores.csv``.
+* ``vmf``    -- fit a vMF concentration kappa on each corpus's (equal-n) contextual
+  embeddings; score ``log(kappa_S / kappa_T)``. Writes ``vmf_pair_scores.csv``.
+* ``wic``    -- a trained WiC model judges each corpus's intra-corpus sentence pairs;
+  score ``log(p_same_S / p_same_T)``. Writes ``wic_pair_scores.csv``.
+* ``cosine`` -- baseline: a cosine-geometry diversity per corpus; score
+  ``log(D_cos_T / D_cos_S)``. Writes ``cosine_pair_scores.csv``.
 
 All outputs are written to OUTPUT_DIR.
 """
@@ -18,13 +21,14 @@ from pathlib import Path
 import click
 import torch
 
+from cosine.cosine_estimation import get_corpora_cosine_pairs
 from utilities.logging_utils import start_logging
-from vmf.vmf_estimation import get_corpora_vmf
-from wic.wic_estimation import get_corpora_wic_score
+from vmf.vmf_estimation import get_corpora_vmf_pairs
+from wic.wic_estimation import get_corpora_wic_pairs
 
 
 @click.command()
-@click.argument("scoring", type=click.Choice(["vmf", "wic"]))
+@click.argument("scoring", type=click.Choice(["vmf", "wic", "cosine"]))
 @click.argument("sim_dir", type=Path)
 @click.argument("output_dir", type=Path)
 @click.option(
@@ -56,17 +60,23 @@ def score(
     wic_model_dir: Path | None,
     base_model: str,
 ) -> None:
-    """Score every simulated corpus under SIM_DIR using SCORING (vmf or wic)."""
+    """Score every corpus pair under SIM_DIR using SCORING (vmf, wic, or cosine)."""
 
     start_logging(output_dir / "logs", file_name=f"score_{scoring}.log")
 
     match scoring:
         case "vmf":
-            get_corpora_vmf(sim_dir, output_dir / "vmf", hf_model_name=hf_model_name)
+            get_corpora_vmf_pairs(
+                sim_dir, output_dir / "vmf", hf_model_name=hf_model_name
+            )
+        case "cosine":
+            get_corpora_cosine_pairs(
+                sim_dir, output_dir / "cosine", hf_model_name=hf_model_name
+            )
         case "wic":
             if not torch.cuda.is_available():
                 raise SystemExit("No CUDA-capable GPU found. Aborting.")
-            get_corpora_wic_score(
+            get_corpora_wic_pairs(
                 sim_dir,
                 output_dir / "wic",
                 model_dir=wic_model_dir,

@@ -1,14 +1,15 @@
-"""Score simulated corpora with a trained WiC sequence-classification model.
+"""Score simulated corpus *pairs* with a trained WiC sequence-classification model.
 
-For each simulated corpus the model judges every sentence pair and we report the
-probability that the two occurrences *differ* in sense (class 0; class 1 = same
-sense, matching the WiC training label convention in
-``data_processing/loading_wic.py``).
+Each corpus's intra-corpus sentence pairs are judged by the model; class 1 is the
+same-sense probability (matching the WiC training label convention in
+``data_processing/loading_wic.py``). A (source, target) pair is then scored by the
+log-ratio ``log(p_same_S / p_same_T)`` of the mean same-sense probabilities, positive
+when the target is more diverse. ``score_corpus_wic`` remains as the per-corpus
+building block (also used by the tests).
 """
 
 import json
 import logging
-import warnings
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +22,8 @@ from transformers import (
     TrainingArguments,
 )
 
+from data_processing.simulation_loading import iter_corpora
+from simulation.pairing import CorpusPair, enumerate_pairs, equalise_indices
 from wic.preprocessing import preprocess_wic_targets
 from wic.target_vector_model import (
     HEAD_PARAM_NAMES,
@@ -75,7 +78,7 @@ def _build_predict_trainer(model, tokenizer) -> Trainer:
 
     A fresh `Trainer` re-wraps `model` via its `Accelerator` (adding hooks around the
     existing forward) without undoing the previous wrapping. Building it once per
-    `get_corpora_wic_score` run rather than once per corpus keeps the wrapper depth
+    `get_corpora_wic_pairs` run rather than once per corpus keeps the wrapper depth
     constant instead of growing with every corpus and eventually hitting a
     RecursionError deep inside the encoder's forward.
     """
@@ -176,70 +179,91 @@ def score_corpus_wic(
     return summary, pair_rows
 
 
-def get_corpora_wic_score(
+def _corpus_p_same(entries: list[dict], trainer: Trainer, tokenizer) -> float:
+    """Mean P(same sense) over a corpus's intra-corpus WiC pairs.
+
+    ``p_same = 1 - p_diff`` where ``p_diff`` is the class-0 softmax probability (see
+    :func:`score_corpus_wic`). Under a perfect model this approximates Simpson
+    concentration ``sum_i p_i^2`` -- the readme's basis for the WiC shift score.
+    """
+    logits = _predict_logits(entries, trainer, tokenizer)
+    exp = np.exp(logits - logits.max(axis=1, keepdims=True))
+    probs = exp / exp.sum(axis=1, keepdims=True)
+    p_same = probs[:, 1]
+    return float(p_same.mean())
+
+
+def score_pair_wic(
+    pair: CorpusPair, trainer: Trainer, tokenizer, seed: int = 0
+) -> dict:
+    """WiC shift score ``log(p_same_S / p_same_T)`` for one (source, target) pair.
+
+    Down-samples the larger pair set to the smaller's count (so the mean is over
+    equal n) and returns the log-ratio; positive => target more diverse. Anomalies
+    raise rather than skip -- they signal a broken pipeline, not a data condition.
+    """
+    if not (pair.source.data_path.exists() and pair.target.data_path.exists()):
+        raise FileNotFoundError(
+            f"{pair.lemma_pos}: missing .data for {pair.source.csv_path.stem} or "
+            f"{pair.target.csv_path.stem}; run convert_simulated_corpora first"
+        )
+
+    entries_s = json.loads(pair.source.data_path.read_text(encoding="utf-8"))
+    entries_t = json.loads(pair.target.data_path.read_text(encoding="utf-8"))
+    assert entries_s and entries_t, (
+        f"{pair.lemma_pos}: empty .data; simulation should never write < 2 pairs"
+    )
+    idx_s, idx_t = equalise_indices(len(entries_s), len(entries_t), seed=seed)
+    entries_s = [entries_s[i] for i in idx_s]
+    entries_t = [entries_t[i] for i in idx_t]
+
+    p_same_s = _corpus_p_same(entries_s, trainer, tokenizer)
+    p_same_t = _corpus_p_same(entries_t, trainer, tokenizer)
+
+    return {
+        "lemma_pos": pair.lemma_pos,
+        "scheme": pair.scheme,
+        "source_variant": pair.source.csv_path.stem,
+        "target_variant": pair.target.csv_path.stem,
+        "wic_log_ratio": float(np.log(p_same_s / p_same_t)),
+        "n_used": len(entries_s),
+    }
+
+
+def get_corpora_wic_pairs(
     sim_dir: Path,
     output_dir: Path,
     model_dir: Path | None = None,
     base_model: str = "answerdotai/ModernBERT-large",
     models_root: Path = Path("output/models"),
+    seed: int = 0,
 ) -> pd.DataFrame:
-    """Score every simulated corpus under ``sim_dir`` with a trained WiC model.
+    """Compute the WiC shift score for every corpus pair under ``sim_dir``.
 
-    Walks ``sim_dir/<lemma>_<pos>/k*_offset_*.csv`` (for the ``.meta.json`` sidecar)
-    and reads the sibling ``.data`` file produced by the conversion step. Writes a
-    per-corpus ``wic_scores.csv`` and a per-pair ``wic_pair_scores.csv`` to
-    ``output_dir`` and returns the per-corpus summary DataFrame.
+    Enumerates (source, target) pairs (three schemes per lemma) and writes one
+    combined ``wic_pair_scores.csv`` to ``output_dir``.
     """
-
     if model_dir is None:
         model_dir = (
-            models_root
-            / base_model.replace("/", "--")
-            / "wic+fews"
-            / "fews"
-            / "final"
+            models_root / base_model.replace("/", "--") / "wic+fews" / "fews" / "final"
         )
-
     assert_trained_head(model_dir)
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
     model = load_wic_model(str(model_dir))
     trainer = _build_predict_trainer(model, tokenizer)
 
-    summary_rows = []
-    pair_rows = []
-    for csv_path in sorted(sim_dir.glob("*/k*_offset_*.csv")):
-        # Not csv_path.with_suffix(...): the "0.00" in the variant name confuses
-        # pathlib's suffix handling. Swap the trailing ".csv" explicitly.
-        stem = csv_path.name[: -len(".csv")]
-        meta_path = csv_path.parent / (stem + ".meta.json")
-        data_path = csv_path.parent / (stem + ".data")
-        if not meta_path.exists():
-            warnings.warn(f"Missing meta_path: {meta_path}")
-            continue  # skip stray CSVs without sidecar metadata
-        if not data_path.exists():
-            warnings.warn(
-                f"{csv_path.parent.name} {stem}: missing .data (run conversion); skipped"
-            )
-            continue
-
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        entries = json.loads(data_path.read_text(encoding="utf-8"))
-
-        summary, corpus_pairs = score_corpus_wic(entries, trainer, tokenizer, meta)
-
-        summary_rows.append(summary)
-        pair_rows.extend(corpus_pairs)
+    pairs = enumerate_pairs(list(iter_corpora(sim_dir)))
+    rows = []
+    for pair in pairs:
+        record = score_pair_wic(pair, trainer, tokenizer, seed=seed)
+        rows.append(record)
         logger.info(
-            "%s %s P(diff) mean: %.4f acc: %.4f (n=%d)",
-            csv_path.parent.name,
-            stem,
-            summary["wic_p_diff_mean"],
-            summary["accuracy"],
-            summary["pair_count"],
+            "%s [%s] %s->%s WiC log-ratio: %.4f (n=%d)",
+            pair.lemma_pos, record["scheme"], record["source_variant"],
+            record["target_variant"], record["wic_log_ratio"], record["n_used"],
         )
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    summary_df = pd.DataFrame(summary_rows)
-    summary_df.to_csv(output_dir / "wic_scores.csv", index=False)
-    pd.DataFrame(pair_rows).to_csv(output_dir / "wic_pair_scores.csv", index=False)
-    return summary_df
+    result = pd.DataFrame(rows)
+    result.to_csv(output_dir / "wic_pair_scores.csv", index=False)
+    return result

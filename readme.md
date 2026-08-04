@@ -6,9 +6,19 @@ The goal of this repository is to compare corpora and estimate the shift in the 
 
 The baseline and the two methods are:
 
-0. Cosine baseline: We use cosine similarities to measure the diversity and then take a log-ratio to estimate shift in diversity.
+0. Cosine baseline: We use leave-one-out cosine distance to measure the diversity and then take a log-ratio to estimate shift in diversity.
 1. vMF-based: We fit and use a von Mises-Fisher (vMF) distribution to estimate diversity, using the log-ratio of kappa parameters to indicate the shift in diversity.
 2. WiC-based: We are applying a transformer model trained on the word-in-context (WiC) task to distinguish whether words share a sense, again taking a log-ratio to indicate shifts in diversity.
+
+
+### Cosine Baseline
+
+For the cosine baseline, we use leave-one-out (LOO) centroid distance as the diversity measure in a log-ratio for the source (S) and target corpus (T). That is, for each corpus, we compare each vector to the mean direction of every vector (centroid) except itself. Using the LOO-setup avoids the bias of comparing the vector against itself. The log-ratio is calculated as follows:
+
+$$\log \frac{D_{\text{cos}}(T)}{D_{\text{cos}}(S)}$$
+
+where $D_{\text{cos}}$ is the LOO cosine distance averaged over all vectors in the corpus.
+
 
 ### vMF Method
 
@@ -142,8 +152,12 @@ The commands required to run the code are provided in the justfile. The order of
 3. simulate-target-verbs: Create a dataset with simulated sense distribution for the list of ten target verbs.
 4. simulate-most-diverse-all: Create datasets with simulated sense distributions for each of the four most-diverse PoS vocabularies.
 5. train-wic-fews: Train the WiC model (on WiC + synthetic FEWS) used for WiC-based scoring.
-6. score-vmf-all: Score all simulation datasets with the vMF method, writing the results to `output/scores/<dataset>`.
-7. score-wic-all: Score all simulation datasets with the WiC method, writing the results to `output/scores/<dataset>`.
+6. score-cosine-all: Score all simulation datasets with the cosine baseline, writing per-pair log-ratios to `output/scores/<dataset>`.
+7. score-vmf-all: Score all simulation datasets with the vMF method (per-pair log-ratios).
+8. score-wic-all: Score all simulation datasets with the WiC method (per-pair log-ratios).
+9. analyse-comparative-all: Correlate each method's shift score against the ground-truth diversity shifts (richness/evenness), writing tables and figures to `output/analysis/<dataset>`.
+
+Each scoring step compares corpus *pairs* per lemma (source vs. target) and writes a `<method>_pair_scores.csv`; the comparative analysis joins these against the ground-truth `log(qD(T)/qD(S))` shifts for q ∈ {0,1,2}.
 
 ## Relevant Literature
 
