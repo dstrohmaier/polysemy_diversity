@@ -28,6 +28,8 @@ $$\log \frac{\kappa_S}{\kappa_T}$$
 
 The $\kappa$ parameters grow _inversely_ with the diversity of the usages. We flip the ratio originally put forward by Nagata et al., i.e. put $\kappa_T$ in the denominator and $\kappa_S$ in the numerator, so that the log-ratio increases when the target corpus is more diverse.
 
+We are assessing on smaller $n$ than Nagata et al. Our experiments show whether their variance-based method can also be applied to smaller corpora.
+
 ### WiC Method
 
 The WiC method approximates the following method:
@@ -50,8 +52,9 @@ To compare the two methods for estimating shifts in diversity, we use a simulati
 
 To make the datasets realistic, we start from a Zipfian distribution and vary two parameters:
 
-1. **Evenness**: the slope of the Zipfian distribution (evenness of sense distribution), and
-2. **Richness**: the support of the Zipfian distribution, i.e. richness as the number of distinct senses.
+1. **Richness**: the support of the Zipfian distribution, i.e. richness as the number of distinct senses.
+2. **Evenness**: the slope of the Zipfian distribution (evenness of sense distribution), and
+
 
 We estimate the slope from the WSD corpus. (The estimate of the slope uses all occurrences of the lemma. In other processing steps, we require a minimum of 5 instances for simulation purposes, but the base slope should be naturalistic.)
 
@@ -77,7 +80,7 @@ Different sizes for source and target corpus lead to problems. To address this i
 
 ### Multi-Dimension Scoring
 
-To score the diversity of usages along the two dimensions of **evenness** and **richness**, it is helpful to look at the general form of common diversity scores:[^1]
+To score the diversity of usages along the two dimensions of **richness** and **evenness** , it is helpful to look at the general form of common diversity scores:[^1]
 
 $${}^{q}D = \left( \sum_{i=1}^{R} p_i^{q} \right)^{1/(1-q)}$$
 
@@ -87,23 +90,35 @@ $${}^{q}D = \left( \sum_{i=1}^{R} p_i^{q} \right)^{1/(1-q)}$$
 | **1** | Shannon diversity | $\exp\left(-\sum_{i=1}^{R} p_i \ln p_i\right)$ | Each category weighted in proportion to its abundance |
 | **2** | Simpson diversity | $1 / \sum_{i=1}^{R} p_i^{2}$                     | Weighted toward the most abundant categories          |
 
-We will score the ground-truth values for all three standard q values and then also consider the log-ratios for the source-target corpus comparisons:
+Setting $q=0$, the scores track exactly **richness**. With $q\in \{1,2 \}$, the scores track a combination of richness and evenness. To operationalise **evenness**, we use $E = {}^{1}D/{}^{0}D$, that is the ratio between Shannon diversisty and richness.
+
+We will score the ground-truth values for all fource metrics and then also consider the log-ratios for the source-target corpus comparisons:
 
 $$\log \frac{{}^{q}D(T)}{{}^{q}D(S)}\, \text{ for } q \in \{0,1,2\}$$
 
- Consequently, for each of the simulated datasets (lemmata) we will have three shift values with which we can correlate the scores of the baseline and the two methods. We use Spearman's Rank Correlation (SRC) for these.
+and 
 
-Evenness could be operationalised as ${}^{1}D/{}^{0}D$ but we stick with the three diversity metrics.
+$$\log \frac{E(T)}{E(S)}$$
+
+
+Consequently, for each of the simulated datasets (lemmata) we will have four shift values with which we can correlate the scores of the baseline and the two methods. We use Spearman's Rank Correlation (SRC) for these.
 
 
 #### Relation to the WiC-based Scoring
 
 Let `p(same)` be the probability that a random pair of word tokens of the same type share a sense. Assuming a perfect WiC model, the $p(\text{same}) \approx \sum_i p^2_i$, where $p^2_i$ is the probability that two draws fall into category $i$. That is, `p(same)` is the inversion of the Simpson diversity index. This index is dominated by frequent senses and, therefore, provides a measure of the dominance of the most frequent sense.
 
+As a consequence, we should consider the WiC-scoring for $q=2$ as a check on the performance of the underlying WiC-model, which is different from how we should interpret the other approaches on this task. 
+
+
+#### Qualification of the Eveness Metric
+
+The evenness metric would be invariant to the number of senses ($k$) if we held the distribution constant while adding senses. However, our simulation does not achieve that because we use the same Zipfian slope for different $k$, which effectively shifts the distribution. As a result, $E$ falls as $k$ rises at a fixed slope, but that just indicates a downside of our simulation which relies on Zipf truncation.
+
 
 ### Vocabularies
 
-Our simulation study covers for each PoS up to 100 lemmata with at least 3 senses. If there are more than 100 lemmata with 3+ senses, we select the 100 with most senses in the WSD corpus. For a sense to be considered in the count, we require a minimum of 5 instances. The filter of 5 is also applied later during the simulation. We find the lowest number of eligible lemmata, just 30, for adverbs .
+Our simulation study covers for each PoS up to 100 lemmata with at least 3 senses. If there are more than 100 lemmata with 3+ senses, we select the 100 with most senses in the WSD corpus. For a sense to be considered in the count, we require a minimum of 5 instances. The filter of 5 is also applied later during the simulation. We find the lowest number of eligible lemmata, just 30, for adverbs. For such small numbers, we expect not separability between the methods.
 
 The creation of these vocabs also creates statistic files (markdown format) which provide numbers for every PoS as well as an overview statistics file that describes the senses per lemma, instances per lemma, and instances per sense.
 
