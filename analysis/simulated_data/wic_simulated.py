@@ -15,7 +15,7 @@ import pandas as pd  # type: ignore
 import seaborn as sns  # type: ignore
 
 from analysis.io import save_fig, write_csv, write_table
-from data_processing.simulation_loading import Corpus, iter_corpora
+from data_processing.simulation_loading import Corpus, load_sim_corpora
 
 logger = logging.getLogger("div")
 
@@ -147,7 +147,7 @@ def analyse_wic_simulated(data_dir: Path, out_root: Path) -> None:
     tables_dir = out_root / "tables"
     figures_dir = out_root / "figures"
 
-    rows = [r for c in iter_corpora(data_dir) if (r := _corpus_row(c)) is not None]
+    rows = [r for c in load_sim_corpora(data_dir) if (r := _corpus_row(c)) is not None]
     if not rows:
         logger.warning(
             "No .data files found under %s; nothing to analyse. Run the WiC "

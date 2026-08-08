@@ -202,7 +202,7 @@ def _collision_prob(sense_probs: dict[str, float]) -> float:
     """P(two independent draws from ``sense_probs`` share a sense).
 
     The Gini-Simpson index sum(p_i**2) over the Zipfian design distribution --
-    the same quantity ``generate_comparison_pairs`` labels 1 (same sense).
+    the same quantity ``build_comparison_pairs`` labels 1 (same sense).
     """
     return float(sum(p * p for p in sense_probs.values()))
 

@@ -34,9 +34,9 @@ from typing import Callable
 
 import numpy as np
 
-from data_processing.dwug_loading import DwugCorpus, iter_dwug_corpora
+from data_processing.dwug_loading import DwugCorpus, load_dwug_corpora
 from data_processing.shared_loading import CorpusHandle
-from data_processing.simulation_loading import Corpus, iter_corpora
+from data_processing.simulation_loading import Corpus, load_sim_corpora
 
 logger = logging.getLogger("div")
 
@@ -90,8 +90,8 @@ def _order(a: Corpus, b: Corpus) -> tuple[Corpus, Corpus]:
     return source, target
 
 
-def enumerate_pairs(corpora: list[Corpus]) -> list[CorpusPair]:
-    """Build all (source, target) pairs for the corpora under one ``sim_dir``.
+def build_simulated_pairs(sim_dir: Path) -> list[CorpusPair]:
+    """Build all (source, target) pairs for the corpora under ``sim_dir``.
 
     Groups by lemma (the ``lemma_pos`` directory), then emits the three comparison
     schemes. A pair is included once per scheme it belongs to (a slope-neighbour of
@@ -99,6 +99,7 @@ def enumerate_pairs(corpora: list[Corpus]) -> list[CorpusPair]:
     distinguishes them so the analysis groups them separately rather than
     de-duplicating.
     """
+    corpora = load_sim_corpora(sim_dir)
     by_lemma: dict[str, list[Corpus]] = defaultdict(list)
     for c in corpora:
         by_lemma[c.lemma_pos].append(c)
@@ -142,7 +143,7 @@ def enumerate_pairs(corpora: list[Corpus]) -> list[CorpusPair]:
             for source, target in _adjacent_pairs(cs, key=lambda c: c.offset):
                 pairs.append(CorpusPair(lemma_pos, "along_slope", source, target))
 
-    logger.info("enumerated %d corpus pairs across %d lemmata", len(pairs), len(by_lemma))
+    logger.info("built %d corpus pairs across %d lemmata", len(pairs), len(by_lemma))
     return pairs
 
 
@@ -197,7 +198,7 @@ def equalise_indices(len_a: int, len_b: int, seed: int = 0) -> tuple[np.ndarray,
     return _keep_indices(len_a, n, rng), _keep_indices(len_b, n, rng)
 
 
-def enumerate_dwug_pairs(corpora: list[DwugCorpus]) -> list[CorpusPair]:
+def build_dwug_pairs(dwug_dir: Path) -> list[CorpusPair]:
     """Build the one (source, target) pair per lemma for the diachronic evaluation.
 
     Source is grouping 1 (1810-1860), target is grouping 2 (1960-2010): here the source
@@ -207,6 +208,7 @@ def enumerate_dwug_pairs(corpora: list[DwugCorpus]) -> list[CorpusPair]:
     A lemma missing either grouping is skipped with a warning rather than aborting the
     run.
     """
+    corpora = load_dwug_corpora(dwug_dir)
     by_lemma: dict[str, dict[int, DwugCorpus]] = defaultdict(dict)
     for c in corpora:
         by_lemma[c.lemma_pos][c.grouping] = c
@@ -223,22 +225,12 @@ def enumerate_dwug_pairs(corpora: list[DwugCorpus]) -> list[CorpusPair]:
             continue
         pairs.append(CorpusPair(lemma_pos, DIACHRONIC_SCHEME, source, target))
 
-    logger.info("enumerated %d diachronic pairs across %d lemmata", len(pairs), len(by_lemma))
+    logger.info("built %d diachronic pairs across %d lemmata", len(pairs), len(by_lemma))
     return pairs
 
 
 # How a scoring driver turns a dataset directory into the pairs to score. The drivers
 # take one of these rather than sniffing the directory layout: a half-populated or
 # misnamed directory would make sniffing silently pick the wrong branch, whereas an
-# explicit enumerator puts the choice at the call site (score_data.py's --dataset).
-PairEnumerator = Callable[[Path], list[CorpusPair]]
-
-
-def simulated_pairs(sim_dir: Path) -> list[CorpusPair]:
-    """Default enumerator: the three simulation comparison schemes under ``sim_dir``."""
-    return enumerate_pairs(list(iter_corpora(sim_dir)))
-
-
-def dwug_pairs(dwug_dir: Path) -> list[CorpusPair]:
-    """Enumerator for the diachronic evaluation: one g1->g2 pair per lemma."""
-    return enumerate_dwug_pairs(list(iter_dwug_corpora(dwug_dir)))
+# explicit builder puts the choice at the call site (score_data.py's --dataset).
+PairBuilder = Callable[[Path], list[CorpusPair]]

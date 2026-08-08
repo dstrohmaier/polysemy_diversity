@@ -27,7 +27,7 @@ from analysis.scored.stats import (
     pair_ground_truth,
     score_scatter,
 )
-from data_processing.simulation_loading import iter_corpora
+from data_processing.simulation_loading import load_sim_corpora
 
 logger = logging.getLogger("div")
 
@@ -52,7 +52,7 @@ def _load_method(
     scores_dir: Path,
     method: str,
     sim_dir: Path,
-    iter_fn: CorpusIterator = iter_corpora,
+    iter_fn: CorpusIterator = load_sim_corpora,
 ) -> pd.DataFrame | None:
     """Load one method's pair scores with ground-truth shift columns attached.
 
@@ -126,13 +126,13 @@ def analyse_comparative(
     scores_dir: Path,
     sim_dir: Path,
     out_root: Path,
-    iter_fn: CorpusIterator = iter_corpora,
+    iter_fn: CorpusIterator = load_sim_corpora,
 ) -> None:
     """Compare the methods' shift scores against the ground-truth diversity shifts.
 
     ``iter_fn`` selects how ``sim_dir`` is walked for the corpora's ``.meta.json``
     sidecars -- the simulated layout by default, or
-    :func:`~data_processing.dwug_loading.iter_dwug_corpora` for the diachronic
+    :func:`~data_processing.dwug_loading.load_dwug_corpora` for the diachronic
     evaluation, where the single ``diachronic`` scheme makes the per-scheme grouping
     collapse to one row per (method, Hill order).
     """

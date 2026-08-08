@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns  # type: ignore
 
 from analysis.io import save_fig, write_csv, write_table
-from data_processing.simulation_loading import Corpus, iter_corpora
+from data_processing.simulation_loading import Corpus, load_sim_corpora
 
 logger = logging.getLogger("div")
 
@@ -188,7 +188,7 @@ def _plot_rank_frequency(per_corpus: pd.DataFrame, data_dir: Path, figures_dir: 
 
     # Index corpora on disk by (lemma_pos, k, offset) so each sampled row finds its file
     # without re-walking the tree per example.
-    by_key = {(c.lemma_pos, c.k, c.offset): c for c in iter_corpora(data_dir)}
+    by_key = {(c.lemma_pos, c.k, c.offset): c for c in load_sim_corpora(data_dir)}
 
     ncols = min(3, n)
     nrows = -(-n // ncols)  # ceil division
@@ -218,7 +218,7 @@ def analyse_raw_simulated(data_dir: Path, out_root: Path) -> None:
     tables_dir = out_root / "tables"
     figures_dir = out_root / "figures"
 
-    rows = [r for c in iter_corpora(data_dir) if (r := _corpus_row(c)) is not None]
+    rows = [r for c in load_sim_corpora(data_dir) if (r := _corpus_row(c)) is not None]
     if not rows:
         logger.warning(
             "No simulated corpora with metadata found under %s; nothing to analyse. "

@@ -37,12 +37,12 @@ import click  # noqa: E402
 from analysis.scored.comparative import analyse_comparative  # noqa: E402
 from analysis.simulated_data.raw_simulated import analyse_raw_simulated  # noqa: E402
 from analysis.simulated_data.wic_simulated import analyse_wic_simulated  # noqa: E402
-from data_processing.dwug_loading import iter_dwug_corpora  # noqa: E402
-from data_processing.simulation_loading import iter_corpora  # noqa: E402
+from data_processing.dwug_loading import load_dwug_corpora  # noqa: E402
+from data_processing.simulation_loading import load_sim_corpora  # noqa: E402
 from utilities.logging_utils import start_logging  # noqa: E402
 
 # Corpus layout under SIM_DIR -> how to walk it for the .meta.json sidecars.
-_CORPUS_ITERATORS = {"simulated": iter_corpora, "dwug": iter_dwug_corpora}
+_CORPUS_ITERATORS = {"simulated": load_sim_corpora, "dwug": load_dwug_corpora}
 
 
 @click.command()

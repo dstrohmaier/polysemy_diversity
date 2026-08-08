@@ -10,7 +10,6 @@ rather than in any one consumer.
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 # Matches a variant stem such as "k3_offset_m0.20" or "k5_offset_p0.00", produced by
 # simulate_zipfian_corpora as f"k{k}_offset_{'m' if offset < 0 else 'p'}{abs(offset):.2f}".
@@ -44,8 +43,8 @@ def parse_variant(stem: str) -> tuple[int, float]:
     return int(match.group("k")), offset
 
 
-def iter_corpora(sim_dir: Path) -> Iterator[Corpus]:
-    """Yield one :class:`Corpus` per simulated CSV under ``sim_dir``.
+def load_sim_corpora(sim_dir: Path) -> list[Corpus]:
+    """Return one :class:`Corpus` per simulated CSV under ``sim_dir``, sorted by path.
 
     Globs ``<lemma>_<pos>/k*_offset_*.csv`` (the layout from
     ``simulate_zipfian_corpora``) and derives the sibling ``.meta.json`` / ``.data``
@@ -53,14 +52,18 @@ def iter_corpora(sim_dir: Path) -> Iterator[Corpus]:
     ``Path.with_suffix`` because the ``.`` in the offset magnitude (e.g.
     ``k3_offset_p0.00``) confuses pathlib's suffix handling.
     """
+    corpora = []
     for csv_path in sorted(sim_dir.glob("*/k*_offset_*.csv")):
         base = csv_path.name[: -len(".csv")]
         k, offset = parse_variant(base)
-        yield Corpus(
-            lemma_pos=csv_path.parent.name,
-            k=k,
-            offset=offset,
-            csv_path=csv_path,
-            meta_path=csv_path.parent / (base + ".meta.json"),
-            data_path=csv_path.parent / (base + ".data"),
+        corpora.append(
+            Corpus(
+                lemma_pos=csv_path.parent.name,
+                k=k,
+                offset=offset,
+                csv_path=csv_path,
+                meta_path=csv_path.parent / (base + ".meta.json"),
+                data_path=csv_path.parent / (base + ".data"),
+            )
         )
+    return corpora

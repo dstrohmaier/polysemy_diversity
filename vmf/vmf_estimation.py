@@ -31,9 +31,9 @@ import pandas as pd  # type: ignore
 from data_processing.vector_extraction import ExtractionConfig, WordVectorExtractor
 from simulation.pairing import (
     CorpusPair,
-    PairEnumerator,
+    PairBuilder,
     equalise_indices,
-    simulated_pairs,
+    build_simulated_pairs,
 )
 
 logger = logging.getLogger("div")
@@ -119,19 +119,19 @@ def get_corpora_vmf_pairs(
     output_dir: Path,
     hf_model_name: str = "answerdotai/ModernBERT-large",
     seed: int = 0,
-    enumerate_corpus_pairs: PairEnumerator = simulated_pairs,
+    build_corpus_pairs: PairBuilder = build_simulated_pairs,
 ) -> pd.DataFrame:
     """Compute the vMF shift score for every corpus pair under ``sim_dir``.
 
-    ``enumerate_corpus_pairs`` decides which (source, target) pairs ``sim_dir``
+    ``build_corpus_pairs`` decides which (source, target) pairs ``sim_dir``
     yields: the default covers the simulation's three comparison schemes, while
-    :func:`~simulation.pairing.dwug_pairs` gives the diachronic evaluation's single
+    :func:`~simulation.pairing.build_dwug_pairs` gives the diachronic evaluation's single
     pair per lemma. Writes one combined ``vmf_pair_scores.csv`` to ``output_dir``.
     """
     extractor = WordVectorExtractor.from_config(
         ExtractionConfig(hf_model_name=hf_model_name)
     )
-    pairs = enumerate_corpus_pairs(sim_dir)
+    pairs = build_corpus_pairs(sim_dir)
     assert pairs, (
         f"no corpus pairs found under {sim_dir}; is the directory layout the one the "
         f"chosen enumerator expects (see score_data.py --dataset)?"

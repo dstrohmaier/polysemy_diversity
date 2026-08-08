@@ -14,7 +14,6 @@ distribution at all.
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 # Grouping stems written by the converter. Source is the *older* corpus here (readme
 # "Second Evaluation"), unlike the simulation where source is the least diverse one.
@@ -47,19 +46,21 @@ def parse_grouping(stem: str) -> int:
     return int(match.group("grouping"))
 
 
-def iter_dwug_corpora(dwug_dir: Path) -> Iterator[DwugCorpus]:
-    """Yield one :class:`DwugCorpus` per grouping CSV under ``dwug_dir``.
+def load_dwug_corpora(dwug_dir: Path) -> list[DwugCorpus]:
+    """Return one :class:`DwugCorpus` per grouping CSV under ``dwug_dir``, sorted by path.
 
     Globs ``<lemma>_<pos>/g[12].csv`` (the layout from ``prepare_dwug_corpora``) and
     derives the sibling ``.meta.json`` / ``.data`` paths. ``Path.with_suffix`` is safe
-    here -- unlike in ``iter_corpora``, where the ``.`` inside an offset magnitude
+    here -- unlike in ``load_corpora``, where the ``.`` inside an offset magnitude
     (``k3_offset_p0.00``) confuses pathlib -- because a grouping stem has no dot.
     """
-    for csv_path in sorted(dwug_dir.glob("*/g[12].csv")):
-        yield DwugCorpus(
+    return [
+        DwugCorpus(
             lemma_pos=csv_path.parent.name,
             grouping=parse_grouping(csv_path.stem),
             csv_path=csv_path,
             meta_path=csv_path.with_suffix(".meta.json"),
             data_path=csv_path.with_suffix(".data"),
         )
+        for csv_path in sorted(dwug_dir.glob("*/g[12].csv"))
+    ]

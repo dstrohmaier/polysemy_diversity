@@ -1,27 +1,28 @@
 import json
 import logging
 from pathlib import Path
-from typing import Generator, Any
+from typing import Any
 
 import pandas as pd  # type: ignore
 
-from data_processing.simulation_loading import iter_corpora
+from data_processing.simulation_loading import load_sim_corpora
 
 logger = logging.getLogger("div")
 
 
-def generate_comparison_pairs(
+def build_comparison_pairs(
     df: pd.DataFrame, seed: int = 1848
-) -> Generator[dict[str, Any], None, None]:
+) -> list[dict[str, Any]]:
     """Pair occurrences of each lemma into WiC-style sentence-pair examples.
 
     Operates on the simulated-corpus schema (lemma/pos/sense/sentence/start/end).
     Within each lemma the rows are shuffled and arranged in a cycle: each row ``i`` is
-    paired with its successor ``(i + 1) mod N``. This yields exactly ``N`` pairs (one
+    paired with its successor ``(i + 1) mod N``. This produces exactly ``N`` pairs (one
     per sentence) with every sentence appearing in exactly two pairs -- once as the
     left element and once as the right -- so the pair count matches the number of
     sentences. The gold ``label`` is whether the two occurrences share a sense.
     """
+    pairs: list[dict[str, Any]] = []
     for lemma, sub_df in df.groupby("lemma"):
         shuffled_df = sub_df.sample(frac=1, random_state=seed).reset_index()
         n = len(shuffled_df)
@@ -42,18 +43,21 @@ def generate_comparison_pairs(
                 f"__{r1['index']}_{r1.start}_{r1.end}"
             )
 
-            yield {
-                "id": data_id,
-                "lemma": lemma,
-                "pos": r0.pos,
-                "sentence1": r0.sentence,
-                "sentence2": r1.sentence,
-                "label": int(r0.sense == r1.sense),
-                "start1": int(r0.start),
-                "end1": int(r0.end),
-                "start2": int(r1.start),
-                "end2": int(r1.end),
-            }
+            pairs.append(
+                {
+                    "id": data_id,
+                    "lemma": lemma,
+                    "pos": r0.pos,
+                    "sentence1": r0.sentence,
+                    "sentence2": r1.sentence,
+                    "label": int(r0.sense == r1.sense),
+                    "start1": int(r0.start),
+                    "end1": int(r0.end),
+                    "start2": int(r1.start),
+                    "end2": int(r1.end),
+                }
+            )
+    return pairs
 
 
 def convert_simulated_corpora(
@@ -66,12 +70,12 @@ def convert_simulated_corpora(
     ``output_dir/<lemma>_<pos>/k*_offset_*.data`` for each, ready for
     ``apply_wic.py`` to consume.
     """
-    for corpus in iter_corpora(sim_dir):
+    for corpus in load_sim_corpora(sim_dir):
         if not corpus.meta_path.exists():
             continue  # skip stray CSVs without sidecar metadata
 
         df = pd.read_csv(corpus.csv_path)
-        pairs = list(generate_comparison_pairs(df, seed=seed))
+        pairs = build_comparison_pairs(df, seed=seed)
 
         out_path = output_dir / corpus.lemma_pos / (corpus.csv_path.stem + ".data")
         out_path.parent.mkdir(parents=True, exist_ok=True)

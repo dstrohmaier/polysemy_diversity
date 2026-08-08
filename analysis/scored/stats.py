@@ -17,7 +17,7 @@ from scipy.stats import bootstrap, spearmanr  # type: ignore
 
 from analysis.io import save_fig
 from data_processing.shared_loading import CorpusHandle
-from data_processing.simulation_loading import iter_corpora
+from data_processing.simulation_loading import load_sim_corpora
 from simulation.diversity import STANDARD_ORDERS, diversity_shift
 
 logger = logging.getLogger("div")
@@ -36,7 +36,7 @@ _BOOT_KW = dict(n_resamples=1000, vectorized=False, paired=True, method="percent
 
 
 def _sense_probs_lookup(
-    sim_dir: Path, iter_fn: CorpusIterator = iter_corpora
+    sim_dir: Path, iter_fn: CorpusIterator = load_sim_corpora
 ) -> dict[tuple[str, str], dict[str, float]]:
     """Map ``(lemma_pos, variant_stem)`` -> that corpus's ``sense_probs``.
 
@@ -44,7 +44,7 @@ def _sense_probs_lookup(
     pure function of these probabilities (no re-simulation, nothing persisted).
 
     For the simulation these are the Zipfian *design* probabilities; for DWUG
-    (``iter_fn=iter_dwug_corpora``) they are the grouping's empirical cluster
+    (``iter_fn=load_dwug_corpora``) they are the grouping's empirical cluster
     distribution, taken over the full grouping before any downsampling.
     """
     lookup: dict[tuple[str, str], dict[str, float]] = {}
@@ -57,7 +57,7 @@ def _sense_probs_lookup(
 
 
 def pair_ground_truth(
-    pair_scores: pd.DataFrame, sim_dir: Path, iter_fn: CorpusIterator = iter_corpora
+    pair_scores: pd.DataFrame, sim_dir: Path, iter_fn: CorpusIterator = load_sim_corpora
 ) -> pd.DataFrame:
     """Attach ground-truth diversity shifts to a method's pair-score rows.
 
@@ -68,7 +68,7 @@ def pair_ground_truth(
     are logged.
 
     ``iter_fn`` selects the dataset layout: the simulated ``k*_offset_*`` grid by
-    default, or :func:`~data_processing.dwug_loading.iter_dwug_corpora` for the
+    default, or :func:`~data_processing.dwug_loading.load_dwug_corpora` for the
     diachronic evaluation, whose variant stems are ``g1``/``g2``.
     """
     lookup = _sense_probs_lookup(sim_dir, iter_fn)

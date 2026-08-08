@@ -28,14 +28,14 @@ from data_processing.dwug_conversion import (
 )
 from data_processing.dwug_loading import (
     DwugCorpus,
-    iter_dwug_corpora,
+    load_dwug_corpora,
     parse_grouping,
 )
 from simulation.pairing import (
     CorpusPair,
-    dwug_pairs,
-    enumerate_dwug_pairs,
-    simulated_pairs,
+    build_dwug_pairs,
+    build_dwug_pairs,
+    build_simulated_pairs,
 )
 from vmf.vmf_estimation import get_corpora_vmf_pairs
 from wic.wic_estimation import get_corpora_wic_pairs
@@ -106,7 +106,7 @@ class DwugLoadingTestCase(unittest.TestCase):
             with self.assertRaises(ValueError):
                 parse_grouping(stem)
 
-    def test_iter_dwug_corpora_finds_both_groupings(self):
+    def test_load_dwug_corpora_finds_both_groupings(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             word_dir = root / "bar_nn"
@@ -114,19 +114,19 @@ class DwugLoadingTestCase(unittest.TestCase):
             for stem in ("g1", "g2"):
                 (word_dir / f"{stem}.csv").write_text("lemma\n", encoding="utf-8")
 
-            corpora = list(iter_dwug_corpora(root))
+            corpora = list(load_dwug_corpora(root))
             self.assertEqual([c.grouping for c in corpora], [1, 2])
             self.assertTrue(all(c.lemma_pos == "bar_nn" for c in corpora))
             # Siblings are derived, not globbed, so they resolve even before writing.
             self.assertEqual(corpora[0].meta_path.name, "g1.meta.json")
             self.assertEqual(corpora[0].data_path.name, "g1.data")
 
-    def test_iter_dwug_corpora_ignores_simulated_layout(self):
+    def test_load_dwug_corpora_ignores_simulated_layout(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "run_VERB").mkdir()
             (root / "run_VERB" / "k3_offset_p0.00.csv").write_text("x\n")
-            self.assertEqual(list(iter_dwug_corpora(root)), [])
+            self.assertEqual(list(load_dwug_corpora(root)), [])
 
 
 class DwugFrameTestCase(unittest.TestCase):
@@ -141,12 +141,12 @@ class DwugFrameTestCase(unittest.TestCase):
 
     def test_pos_is_coarse_suffix_not_claws_tag(self):
         # DWUG's own `pos` varies within every lemma (nn1/nnt1/nn2 here), and
-        # generate_comparison_pairs asserts paired rows agree on it -- so the coarse
+        # build_comparison_pairs asserts paired rows agree on it -- so the coarse
         # suffix of lemma_pos is used instead.
         self.assertEqual(set(self.frame["pos"]), {"nn"})
 
     def test_lemma_is_lemma_pos(self):
-        # A single constant value means generate_comparison_pairs sees one group.
+        # A single constant value means build_comparison_pairs sees one group.
         self.assertEqual(set(self.frame["lemma"]), {"bar_nn"})
 
     def test_target_span_selects_target_token(self):
@@ -234,24 +234,35 @@ class DwugWriteTestCase(unittest.TestCase):
         self.assertGreaterEqual(MIN_GROUPING_USAGES, 2)
 
 
+def _write_groupings(root: Path, lemma_groupings) -> Path:
+    """Materialise ``(lemma_pos, grouping)`` entries as the on-disk DWUG layout."""
+    for lemma_pos, grouping in lemma_groupings:
+        word_dir = root / lemma_pos
+        word_dir.mkdir(parents=True, exist_ok=True)
+        (word_dir / f"g{grouping}.csv").write_text("lemma\n", encoding="utf-8")
+    return root
+
+
 class DwugPairingTestCase(unittest.TestCase):
     def test_one_pair_per_lemma_source_is_older_grouping(self):
-        corpora = [
-            _dwug_corpus("bar_nn", 1), _dwug_corpus("bar_nn", 2),
-            _dwug_corpus("pin_vb", 2), _dwug_corpus("pin_vb", 1),
-        ]
-        pairs = enumerate_dwug_pairs(corpora)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _write_groupings(
+                Path(tmp),
+                [("bar_nn", 1), ("bar_nn", 2), ("pin_vb", 2), ("pin_vb", 1)],
+            )
+            pairs = build_dwug_pairs(root)
         self.assertEqual(len(pairs), 2)
         for pair in pairs:
-            # Source is the 1810-1860 corpus regardless of input order, and unlike
+            # Source is the 1810-1860 corpus regardless of on-disk order, and unlike
             # the simulation no diversity ordering is applied.
             self.assertEqual(pair.source.grouping, 1)
             self.assertEqual(pair.target.grouping, 2)
             self.assertEqual(pair.scheme, "diachronic")
 
     def test_lemma_missing_a_grouping_is_skipped(self):
-        pairs = enumerate_dwug_pairs([_dwug_corpus("lone_nn", 1)])
-        self.assertEqual(pairs, [])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _write_groupings(Path(tmp), [("lone_nn", 1)])
+            self.assertEqual(build_dwug_pairs(root), [])
 
     def test_corpus_pair_accepts_dwug_corpus(self):
         pair = CorpusPair(
@@ -289,7 +300,7 @@ class DwugGroundTruthTestCase(unittest.TestCase):
                     "cosine_log_ratio": 0.5, "n_used": 2,
                 }]
             )
-            gt = pair_ground_truth(scores, out, iter_dwug_corpora)
+            gt = pair_ground_truth(scores, out, load_dwug_corpora)
             # g1 has one sense, g2 has two, so richness rises: log(2/1).
             self.assertAlmostEqual(gt["gt_shift_q0"].iloc[0], 0.6931471805599453)
             self.assertGreater(gt["gt_shift_q1"].iloc[0], 0)
@@ -307,7 +318,7 @@ class DwugGroundTruthTestCase(unittest.TestCase):
                     "cosine_log_ratio": 0.0, "n_used": 2,
                 }]
             )
-            gt = pair_ground_truth(scores, out, iter_dwug_corpora)
+            gt = pair_ground_truth(scores, out, load_dwug_corpora)
             for q in (0, 1, 2):
                 self.assertEqual(gt[f"gt_shift_q{q}"].iloc[0], 0.0)
 
@@ -349,9 +360,9 @@ class EnumeratorInjectionTestCase(unittest.TestCase):
             get_corpora_cosine_pairs, get_corpora_vmf_pairs, get_corpora_wic_pairs
         ):
             default = inspect.signature(driver).parameters[
-                "enumerate_corpus_pairs"
+                "build_corpus_pairs"
             ].default
-            self.assertIs(default, simulated_pairs, driver.__name__)
+            self.assertIs(default, build_simulated_pairs, driver.__name__)
 
     def test_dwug_enumerator_reads_the_dwug_layout(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -360,7 +371,7 @@ class EnumeratorInjectionTestCase(unittest.TestCase):
             word_dir.mkdir()
             for stem in ("g1", "g2"):
                 (word_dir / f"{stem}.csv").write_text("lemma\n", encoding="utf-8")
-            pairs = dwug_pairs(root)
+            pairs = build_dwug_pairs(root)
             self.assertEqual(len(pairs), 1)
             self.assertEqual(pairs[0].scheme, "diachronic")
 

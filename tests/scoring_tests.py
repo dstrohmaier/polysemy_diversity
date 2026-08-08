@@ -1,3 +1,4 @@
+import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -8,9 +9,8 @@ import pandas as pd
 
 from analysis.scored.stats import correlation_table
 from cosine.cosine_estimation import loo_centroid_distance
-from data_processing.simulation_loading import Corpus
 from simulation.diversity import diversity_shift, hill_diversity
-from simulation.pairing import enumerate_pairs, equalise_indices
+from simulation.pairing import build_simulated_pairs, equalise_indices
 from vmf.vmf_estimation import _estimate_kappa, estimate_vmf_parameters
 from wic.wic_estimation import score_corpus_wic
 
@@ -207,26 +207,31 @@ class HillDiversityTestCase(unittest.TestCase):
         self.assertGreater(diversity_shift(source, target, 2), 0.0)
 
 
-def _corpus(lemma_pos, k, offset):
-    """A Corpus handle with the on-disk variant stem the pairing logic reads."""
-    stem = f"k{k}_offset_{'m' if offset < 0 else 'p'}{abs(offset):.2f}"
-    return Corpus(
-        lemma_pos=lemma_pos,
-        k=k,
-        offset=offset,
-        csv_path=Path(f"{lemma_pos}/{stem}.csv"),
-        meta_path=Path("x"),
-        data_path=Path("y"),
-    )
+def _write_corpora(root: Path, variants):
+    """Materialise ``(lemma_pos, k, offset)`` variants as the on-disk layout.
+
+    ``build_simulated_pairs`` reads the corpus dir itself, so the pairing tests set up
+    real (empty) CSVs whose stems carry the k/offset the logic parses.
+    """
+    for lemma_pos, k, offset in variants:
+        stem = f"k{k}_offset_{'m' if offset < 0 else 'p'}{abs(offset):.2f}"
+        word_dir = root / lemma_pos
+        word_dir.mkdir(parents=True, exist_ok=True)
+        (word_dir / f"{stem}.csv").write_text("lemma\n", encoding="utf-8")
+    return root
 
 
 class PairingTestCase(unittest.TestCase):
     def setUp(self):
         # One lemma, k in {3, 4}, offset in {-0.1, 0.0, 0.1}.
-        self.corpora = [
-            _corpus("run_VERB", k, o) for k in (3, 4) for o in (-0.1, 0.0, 0.1)
-        ]
-        self.pairs = enumerate_pairs(self.corpora)
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = _write_corpora(
+            Path(self._tmp.name),
+            [("run_VERB", k, o) for k in (3, 4) for o in (-0.1, 0.0, 0.1)],
+        )
+        self.n_corpora = 6
+        self.pairs = build_simulated_pairs(root)
 
     def test_primary_source_is_low_diversity_anchor(self):
         # Every "primary" pair sources from the lowest-k, steepest-slope corpus.
@@ -234,7 +239,7 @@ class PairingTestCase(unittest.TestCase):
         self.assertTrue(
             all(p.source.csv_path.stem == "k3_offset_m0.10" for p in primary)
         )
-        self.assertEqual(len(primary), len(self.corpora) - 1)
+        self.assertEqual(len(primary), self.n_corpora - 1)
 
     def test_along_slope_source_is_steeper(self):
         # Same k, so the source (lower diversity) has the smaller offset.
@@ -248,17 +253,22 @@ class PairingTestCase(unittest.TestCase):
             self.assertLess(p.source.k, p.target.k)
 
     def test_single_corpus_lemma_yields_no_pairs(self):
-        self.assertEqual(enumerate_pairs([_corpus("lone_NOUN", 3, 0.0)]), [])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _write_corpora(Path(tmp), [("lone_NOUN", 3, 0.0)])
+            self.assertEqual(build_simulated_pairs(root), [])
 
     def test_duplicate_variant_skipped_not_crashed(self):
-        # Two files parsing to the same (k, offset) must not abort the run; the
-        # degenerate neighbour pair is skipped, other pairs still produced.
-        dupes = [
-            _corpus("dup_VERB", 3, 0.0),
-            _corpus("dup_VERB", 3, 0.0),
-            _corpus("dup_VERB", 4, 0.0),
-        ]
-        pairs = enumerate_pairs(dupes)  # must not raise
+        # Two stems parsing to the same (k, offset) must not abort the run; the
+        # degenerate neighbour pair is skipped, other pairs still produced. The
+        # duplicate needs distinct *filenames* that parse alike, which the trailing
+        # zero of "p0.000" supplies -- two files cannot share one stem on disk.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _write_corpora(Path(tmp), [("dup_VERB", 4, 0.0)])
+            word_dir = root / "dup_VERB"
+            for stem in ("k3_offset_p0.00", "k3_offset_p0.000"):
+                (word_dir / f"{stem}.csv").write_text("lemma\n", encoding="utf-8")
+
+            pairs = build_simulated_pairs(root)  # must not raise
         # The k3->k4 comparison still exists; no pair has identical endpoints.
         self.assertTrue(any(p.source.k != p.target.k for p in pairs))
         for p in pairs:

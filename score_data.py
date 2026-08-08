@@ -27,14 +27,14 @@ import click
 import torch
 
 from cosine.cosine_estimation import get_corpora_cosine_pairs
-from simulation.pairing import dwug_pairs, simulated_pairs
+from simulation.pairing import build_dwug_pairs, build_simulated_pairs
 from utilities.logging_utils import start_logging
 from utilities.reproducibility import make_reproducible
 from vmf.vmf_estimation import get_corpora_vmf_pairs
 from wic.wic_estimation import get_corpora_wic_pairs
 
 # Corpus layout under SIM_DIR -> the enumerator that turns it into scoring pairs.
-_PAIR_ENUMERATORS = {"simulated": simulated_pairs, "dwug": dwug_pairs}
+_PAIR_ENUMERATORS = {"simulated": build_simulated_pairs, "dwug": build_dwug_pairs}
 
 
 @click.command()
@@ -95,7 +95,7 @@ def score(
     # Scoring is pure inference, so the determinism flags cost no measurable
     # throughput here (unlike training, which opts out to keep cudnn.benchmark).
     make_reproducible(seed, deterministic=True)
-    enumerate_corpus_pairs = _PAIR_ENUMERATORS[dataset]
+    build_corpus_pairs = _PAIR_ENUMERATORS[dataset]
 
     match scoring:
         case "vmf":
@@ -104,7 +104,7 @@ def score(
                 output_dir / "vmf",
                 hf_model_name=hf_model_name,
                 seed=seed,
-                enumerate_corpus_pairs=enumerate_corpus_pairs,
+                build_corpus_pairs=build_corpus_pairs,
             )
         case "cosine":
             get_corpora_cosine_pairs(
@@ -112,7 +112,7 @@ def score(
                 output_dir / "cosine",
                 hf_model_name=hf_model_name,
                 seed=seed,
-                enumerate_corpus_pairs=enumerate_corpus_pairs,
+                build_corpus_pairs=build_corpus_pairs,
             )
         case "wic":
             if not torch.cuda.is_available():
@@ -123,7 +123,7 @@ def score(
                 model_dir=wic_model_dir,
                 base_model=base_model,
                 seed=seed,
-                enumerate_corpus_pairs=enumerate_corpus_pairs,
+                build_corpus_pairs=build_corpus_pairs,
             )
 
 

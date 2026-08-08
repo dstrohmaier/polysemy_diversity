@@ -5,7 +5,7 @@ clustering in ``clusters/opt/``. The diachronic evaluation needs, per lemma, two
 corpora -- grouping 1 (1810-1860, the *source*) and grouping 2 (1960-2010, the
 target) -- written in the simulated-corpus schema
 ``lemma,pos,sense,sentence,start,end``. Writing that schema means
-:func:`~data_processing.wic_conversion.generate_comparison_pairs` and every
+:func:`~data_processing.wic_conversion.build_comparison_pairs` and every
 ``score_pair_*`` function work verbatim on DWUG, and the WiC ``.data`` labels come
 out as a free accuracy diagnostic against the DWUG clustering.
 
@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd  # type: ignore
 
 from data_processing.dwug_loading import SOURCE_STEM, TARGET_STEM
-from data_processing.wic_conversion import generate_comparison_pairs
+from data_processing.wic_conversion import build_comparison_pairs
 from simulation.diversity import STANDARD_ORDERS, diversity_shift, hill_diversity
 
 logger = logging.getLogger("div")
@@ -41,7 +41,7 @@ logger = logging.getLogger("div")
 NOISE_CLUSTER = -1
 
 # Both scorers need at least two usages: loo_centroid_distance asserts n >= 2, and
-# generate_comparison_pairs emits nothing for n < 2.
+# build_comparison_pairs emits nothing for n < 2.
 MIN_GROUPING_USAGES = 2
 
 # The two decade groupings of the readme's "Second Evaluation".
@@ -74,12 +74,12 @@ def dwug_lemma_frame(
     Two column choices are deliberate and easy to get wrong:
 
     * ``lemma`` is set to ``lemma_pos`` (e.g. ``"afternoon_nn"``).
-      ``generate_comparison_pairs`` groups by ``lemma``, so one constant value per file
+      ``build_comparison_pairs`` groups by ``lemma``, so one constant value per file
       yields exactly one group.
     * ``pos`` is the **coarse suffix** of ``lemma_pos`` (``"nn"`` / ``"vb"``), *not*
       DWUG's own ``pos`` column. That column holds fine-grained CLAWS tags which vary
       *within* every one of the 46 lemmata (``pin_vb`` alone has 16 distinct values),
-      and ``generate_comparison_pairs`` asserts that paired rows agree on ``pos`` --
+      and ``build_comparison_pairs`` asserts that paired rows agree on ``pos`` --
       so passing DWUG's column through would fire that assert on essentially every
       lemma.
 
@@ -212,12 +212,12 @@ def write_dwug_lemma(
             json.dumps(meta, indent=2), encoding="utf-8"
         )
 
-        # Read the CSV back rather than pairing `sub` directly: generate_comparison_pairs
+        # Read the CSV back rather than pairing `sub` directly: build_comparison_pairs
         # builds each pair id from the incoming frame's reset index, so a filtered slice
         # would embed pre-filter DWUG row numbers. Reading back gives a clean 0..n-1
         # index (as the simulation path produces) and guarantees the .data pairs come
         # from exactly the bytes the vMF and cosine scorers read.
-        pairs = list(generate_comparison_pairs(pd.read_csv(csv_path), seed=seed))
+        pairs = list(build_comparison_pairs(pd.read_csv(csv_path), seed=seed))
         (word_dir / f"{stem}.data").write_text(
             json.dumps(pairs, indent=2), encoding="utf-8"
         )
