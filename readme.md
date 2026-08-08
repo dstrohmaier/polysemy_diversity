@@ -46,7 +46,7 @@ To create WiC-based diversity scores, we sample pairs of occurrences from the co
 
 ## First Evaluation: Polysemy-Based Simulation Study
 
-To compare the two methods for estimating shifts in diversity, we use a simulation study with known ground-truth: We create artificial datasets where we know the correct senses by sampling from a WSD corpus. The approach is similar to that by [Schlechtweg & Walde (2020)](https://arxiv.org/abs/2001.03216).
+To compare the two methods for estimating shifts in diversity, we use a simulation study with known ground-truth: We create artificial datasets where we know the correct senses by sampling from a WSD corpus. The approach is inspired by [Schlechtweg & Walde (2020)](https://arxiv.org/abs/2001.03216), but their simulation is targeting the emergence and disappearance of lexical senses over time change. We are more interested in the fine-grained control of individual corpora on which we can then compare different methods targeting shifts in diversity.
 
 To make the datasets realistic, we start from a Zipfian distribution and vary two parameters:
 
