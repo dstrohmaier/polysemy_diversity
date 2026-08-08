@@ -16,16 +16,19 @@ import logging
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd  # type: ignore
 import seaborn as sns  # type: ignore
 
 from analysis.io import save_fig, write_table
 from analysis.scored.stats import (
     GT_SHIFT_COLS,
+    N_USED_COL,
     CorpusIterator,
     correlation_table,
     pair_ground_truth,
     score_scatter,
+    spearman_with_ci,
 )
 from data_processing.simulation_loading import load_sim_corpora
 
@@ -92,6 +95,96 @@ def shift_correlation_table(loaded: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return pd.concat(parts, ignore_index=True)
 
 
+def n_sensitivity_table(loaded: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """How each method's per-pair error depends on the corpus size it was scored at.
+
+    Every scorer down-samples a pair to ``n_used = min(n_S, n_T)`` before measuring, so
+    a pair's score is computed on however many usages the smaller corpus supplied. The
+    vMF estimator's attenuation is a known function of that n (the resultant length is
+    biased upward at small n and converges as n grows), while the cosine baseline does
+    not share that dependence. If vMF trails the baseline, this table separates "the
+    approach is weaker" from "the approach was run below the sample size it needs":
+    the former shows a flat error-vs-n relation, the latter a negative one.
+
+    One row per ``(method, scheme, gt_shift_q)``: Spearman rho of ``|score - gt|``
+    against ``n_used``, plus the n range it spans. A negative rho means larger corpora
+    gave smaller errors. A constant n (the simulation can fix corpus size within a
+    scheme) or fewer than three pairs is reported with a ``note`` rather than dropped,
+    matching :func:`~analysis.scored.stats.correlation_table`'s convention.
+    """
+    rows = []
+    for method in _METHOD_ORDER:
+        df = loaded.get(method)
+        if df is None:
+            continue
+        *_, score_col = _METHODS[method]
+        for scheme, sub in df.groupby("scheme"):
+            for gt_col in _GT_COLS:
+                pair = sub[[score_col, gt_col, N_USED_COL]].dropna()
+                # Absolute deviation from the ground-truth shift: the per-pair error
+                # whose size, not direction, is expected to shrink with n.
+                err = (pair[score_col] - pair[gt_col]).abs().to_numpy()
+                ns = pair[N_USED_COL].to_numpy(dtype=float)
+                note = ""
+                if len(ns) < 3:
+                    rho = lo = hi = float("nan")
+                    note = "n<3"
+                elif np.ptp(ns) == 0:
+                    rho = lo = hi = float("nan")
+                    note = "constant n_used"
+                elif np.ptp(err) == 0:
+                    rho = lo = hi = float("nan")
+                    note = "constant error"
+                else:
+                    rho, lo, hi, _ = spearman_with_ci(ns, err)
+                rows.append(
+                    {
+                        "method": method,
+                        "scheme": scheme,
+                        "predictor": gt_col,
+                        "rho_err_vs_n": rho,
+                        "ci_low": lo,
+                        "ci_high": hi,
+                        "n_pairs": len(ns),
+                        "n_used_min": float(ns.min()) if len(ns) else float("nan"),
+                        "n_used_max": float(ns.max()) if len(ns) else float("nan"),
+                        "note": note,
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def _plot_err_vs_n(loaded: dict[str, pd.DataFrame], gt_col: str, figures_dir: Path,
+                   name: str) -> None:
+    """Per-pair absolute error against ``n_used``, one colour per method.
+
+    The visual companion to :func:`n_sensitivity_table`: a downward trend for vMF but
+    not the cosine baseline is the signature of a sample-size-driven deficit rather
+    than a weakness of the approach.
+    """
+    palette = _method_palette()
+    fig, ax = plt.subplots()
+    plotted = False
+    for method in _METHOD_ORDER:
+        df = loaded.get(method)
+        if df is None:
+            continue
+        *_, score_col = _METHODS[method]
+        pair = df[[score_col, gt_col, N_USED_COL]].dropna()
+        if pair.empty:
+            continue
+        ax.scatter(pair[N_USED_COL], (pair[score_col] - pair[gt_col]).abs(),
+                   s=12, alpha=0.6, color=palette[method], label=method)
+        plotted = True
+    if not plotted:
+        plt.close(fig)
+        return
+    ax.set_xlabel("n used (post-downsample corpus size)")
+    ax.set_ylabel(f"|score - {gt_col}|")
+    ax.legend(title="method", fontsize="small")
+    save_fig(fig, figures_dir, name)
+
+
 def _plot_rho_by_scheme(corr: pd.DataFrame, gt_col: str, figures_dir: Path, name: str) -> None:
     """Dot plot of Spearman rho against comparison scheme, one colour per method.
 
@@ -148,6 +241,13 @@ def analyse_comparative(
     corr = shift_correlation_table(loaded)
     write_table(corr, tables_dir, "shift_correlations", convert_col_names=True)
 
+    # Sample-size diagnostic: each rho above is computed at a particular n_used, and
+    # the vMF estimator's bias depends on it. This table and its figures say whether a
+    # method's error actually tracks n over the range present in the data.
+    n_sens = n_sensitivity_table(loaded)
+    if not n_sens.empty:
+        write_table(n_sens, tables_dir, "n_sensitivity", convert_col_names=True)
+
     # Per-pair scatter of each method's log-ratio against each ground-truth shift.
     for method, df in loaded.items():
         *_, score_col = _METHODS[method]
@@ -160,8 +260,17 @@ def analyse_comparative(
 
     for q, gt_col in GT_SHIFT_COLS.items():
         _plot_rho_by_scheme(corr, gt_col, figures_dir, f"comparative_rho_by_scheme_q{q}")
+        _plot_err_vs_n(loaded, gt_col, figures_dir, f"comparative_err_vs_n_q{q}")
 
     logger.info(
         "comparative: %d correlation rows across %d method(s)",
         len(corr), corr["method"].nunique(),
     )
+    if not n_sens.empty:
+        spans = n_sens[n_sens["note"] == ""]
+        logger.info(
+            "n-sensitivity: %d/%d cells had a varying n_used (range %s-%s overall)",
+            len(spans), len(n_sens),
+            f"{n_sens['n_used_min'].min():.0f}" if len(n_sens) else "-",
+            f"{n_sens['n_used_max'].max():.0f}" if len(n_sens) else "-",
+        )

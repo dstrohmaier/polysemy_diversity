@@ -8,6 +8,7 @@ import numpy as np
 
 import pandas as pd
 
+from analysis.scored.comparative import n_sensitivity_table
 from analysis.scored.stats import correlation_table
 from cosine.cosine_estimation import loo_centroid_distance, score_pair_cosine
 from simulation.diversity import diversity_shift, hill_diversity
@@ -284,9 +285,14 @@ class CorrelationTableTestCase(unittest.TestCase):
     """The degenerate-predictor guard: a constant predictor (e.g. the q=0 richness
     shift within a same-k scheme) must be flagged, not silently NaN'd via scipy."""
 
-    def _df(self, scores, predictor_vals, group="along_slope"):
+    def _df(self, scores, predictor_vals, group="along_slope", n_used=None):
         return pd.DataFrame(
-            {"scheme": [group] * len(scores), "score": scores, "gt": predictor_vals}
+            {
+                "scheme": [group] * len(scores),
+                "score": scores,
+                "gt": predictor_vals,
+                "n_used": n_used if n_used is not None else [100] * len(scores),
+            }
         )
 
     def test_constant_predictor_flagged(self):
@@ -311,6 +317,68 @@ class CorrelationTableTestCase(unittest.TestCase):
         row = out.iloc[0]
         self.assertAlmostEqual(row["spearmanr"], 1.0)
         self.assertEqual(row["note"], "")
+
+    def test_n_used_summarised_alongside_rho(self):
+        # A rho is only interpretable next to the corpus size it was computed at.
+        df = self._df([0.1, 0.4, 0.9], [0.2, 0.5, 0.8], n_used=[40, 100, 220])
+        row = correlation_table(df, "score", ["gt"], group_col="scheme").iloc[0]
+        self.assertEqual(row["n_used_median"], 100.0)
+        self.assertEqual(row["n_used_min"], 40.0)
+        self.assertEqual(row["n_used_max"], 220.0)
+
+    def test_n_used_summary_covers_only_correlated_rows(self):
+        # The dropna decides which rows reach spearmanr; the n summary must describe
+        # that same subset, not the pre-drop frame.
+        df = self._df([0.1, 0.4, 0.9, 0.95], [0.2, 0.5, 0.8, np.nan],
+                      n_used=[40, 100, 220, 9999])
+        row = correlation_table(df, "score", ["gt"], group_col="scheme").iloc[0]
+        self.assertEqual(row["n"], 3)
+        self.assertEqual(row["n_used_max"], 220.0)
+
+    def test_missing_n_used_column_rejected(self):
+        df = self._df([0.1, 0.4, 0.9], [0.2, 0.5, 0.8]).drop(columns="n_used")
+        with self.assertRaises(AssertionError):
+            correlation_table(df, "score", ["gt"], group_col="scheme")
+
+
+class NSensitivityTestCase(unittest.TestCase):
+    """Error-vs-n diagnostic: separates a weak method from one run below the sample
+    size it needs (readme's vMF/Nagata regime caveat)."""
+
+    def _loaded(self, scores, gts, ns):
+        return {
+            "vMF": pd.DataFrame(
+                {
+                    "scheme": ["primary"] * len(scores),
+                    "vmf_log_ratio": scores,
+                    "gt_shift_q0": gts,
+                    "gt_shift_q1": gts,
+                    "gt_shift_q2": gts,
+                    "n_used": ns,
+                }
+            )
+        }
+
+    def test_error_shrinking_with_n_gives_negative_rho(self):
+        # Error falls as n grows: the signature of a sample-size-driven deficit.
+        loaded = self._loaded([1.0, 0.7, 0.55, 0.5], [0.5] * 4, [25, 50, 100, 400])
+        out = n_sensitivity_table(loaded)
+        row = out[out["predictor"] == "gt_shift_q2"].iloc[0]
+        self.assertLess(row["rho_err_vs_n"], 0)
+        self.assertEqual(row["n_used_min"], 25.0)
+        self.assertEqual(row["n_used_max"], 400.0)
+
+    def test_constant_n_flagged_not_dropped(self):
+        # The simulation can hold corpus size fixed within a scheme; that is a
+        # distinct, reportable reason for a missing rho.
+        loaded = self._loaded([1.0, 0.7, 0.55], [0.5] * 3, [100, 100, 100])
+        out = n_sensitivity_table(loaded)
+        self.assertTrue((out["note"] == "constant n_used").all())
+        self.assertTrue(out["rho_err_vs_n"].isna().all())
+
+    def test_unscored_method_skipped(self):
+        # analyse_comparative drops methods whose CSV is absent; the table follows.
+        self.assertTrue(n_sensitivity_table({"vMF": None}).empty)
 
 
 def _naive_loo_centroid_distance(vectors: np.ndarray) -> float:

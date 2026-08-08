@@ -34,6 +34,10 @@ CorpusIterator = Callable[[Path], Iterable[CorpusHandle]]
 # Fixed generators so bootstrap CIs are reproducible across runs.
 _BOOT_KW = dict(n_resamples=1000, vectorized=False, paired=True, method="percentile")
 
+# The post-downsample corpus size each scorer records per pair (equal for source and
+# target by construction -- see simulation.pairing.equalise_indices).
+N_USED_COL = "n_used"
+
 
 def _sense_probs_lookup(
     sim_dir: Path, iter_fn: CorpusIterator = load_sim_corpora
@@ -131,6 +135,10 @@ def correlation_table(
     and a ``note`` explaining any NaN rho. Predictor columns with NaNs (e.g. an
     unmatched ground-truth shift) are dropped pairwise.
 
+    ``n_used`` (the post-downsample corpus size) is summarised alongside each rho over
+    the rows that survived the dropna: the vMF bias is a function of n, so a rho is
+    only interpretable next to the n it was computed at.
+
     Some (group, predictor) cells are undefined *by construction* rather than for
     lack of data: e.g. the q=0 (richness) shift is identically 0 for every pair that
     shares k, so its column is constant and Spearman is undefined. Those are detected
@@ -138,12 +146,14 @@ def correlation_table(
     scipy DegenerateDataWarning) -- and marked ``note="constant predictor"`` so the
     table and figures distinguish them from the small-sample ``note="n<3"`` case.
     """
+    assert N_USED_COL in df.columns, f"pair scores lack {N_USED_COL!r}: {list(df.columns)}"
     rows = []
     for group_val, sub in df.groupby(group_col):
         for predictor in predictors:
-            pair = sub[[score_col, predictor]].dropna()
+            pair = sub[[score_col, predictor, N_USED_COL]].dropna()
             xs = pair[score_col].to_numpy()
             ys = pair[predictor].to_numpy()
+            n_used = pair[N_USED_COL]
             note = ""
             if len(xs) < 3:
                 rho = lo = hi = float("nan")
@@ -170,6 +180,9 @@ def correlation_table(
                     "ci_low": lo,
                     "ci_high": hi,
                     "n": n,
+                    "n_used_median": n_used.median(),
+                    "n_used_min": n_used.min(),
+                    "n_used_max": n_used.max(),
                     "note": note,
                 }
             )
