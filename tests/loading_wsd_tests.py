@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from data_processing.loading_wsd import wsd_generator
+from data_processing.lwsd_loading import wsd_generator
 
 
 def _word(text, break_level, *, lemma=None, pos=None, sense=None) -> str:

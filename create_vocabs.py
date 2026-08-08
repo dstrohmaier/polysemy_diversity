@@ -7,7 +7,7 @@ import pandas as pd  # type: ignore
 from nltk.metrics.distance import edit_distance  # type: ignore
 
 from data_processing.constants import MIN_EXAMPLES, MIN_SENSES
-from data_processing.loading_wsd import wsd_generator
+from data_processing.lwsd_loading import wsd_generator
 
 # The content-word universal POS labels used in the vocab files
 # (e.g. source_data/vocabs/target_verbs.json). The WSD annotations already use

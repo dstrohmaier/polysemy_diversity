@@ -11,8 +11,8 @@ from transformers import (
 )
 import evaluate  # type: ignore
 
-from data_processing.loading_wic import get_wic_dsd
-from data_processing.loading_fews import get_fews_wic_dsd
+from data_processing.wic_loading import get_wic_dsd
+from data_processing.fews_loading import get_fews_wic_dsd
 from utilities.reproducibility import make_reproducible
 from wic.preprocessing import preprocess_wic_targets
 from wic.target_vector_model import WiCTargetDataCollator, load_wic_model

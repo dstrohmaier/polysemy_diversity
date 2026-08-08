@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from data_processing.loading_fews import (
+from data_processing.fews_loading import (
     build_balanced_pairs,
     get_fews_wic_dsd,
     load_fews_occurrences,
