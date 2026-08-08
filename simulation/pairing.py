@@ -200,13 +200,12 @@ def equalise_indices(len_a: int, len_b: int, seed: int = 0) -> tuple[np.ndarray,
 def enumerate_dwug_pairs(corpora: list[DwugCorpus]) -> list[CorpusPair]:
     """Build the one (source, target) pair per lemma for the diachronic evaluation.
 
-    Source is grouping 1 (1810-1860), target grouping 2 (1960-2010): here the source
+    Source is grouping 1 (1810-1860), target is grouping 2 (1960-2010): here the source
     is the *older* corpus rather than the less diverse one (readme "Second
-    Evaluation"), so unlike :func:`enumerate_pairs` no diversity ordering is applied.
+    Evaluation").
 
     A lemma missing either grouping is skipped with a warning rather than aborting the
-    run: a pair needs both sides, and one incomplete lemma should not cost the whole
-    dataset's scores.
+    run.
     """
     by_lemma: dict[str, dict[int, DwugCorpus]] = defaultdict(dict)
     for c in corpora:

@@ -29,6 +29,7 @@ import torch
 from cosine.cosine_estimation import get_corpora_cosine_pairs
 from simulation.pairing import dwug_pairs, simulated_pairs
 from utilities.logging_utils import start_logging
+from utilities.reproducibility import make_reproducible
 from vmf.vmf_estimation import get_corpora_vmf_pairs
 from wic.wic_estimation import get_corpora_wic_pairs
 
@@ -69,6 +70,15 @@ _PAIR_ENUMERATORS = {"simulated": simulated_pairs, "dwug": dwug_pairs}
     help="Corpus layout under SIM_DIR: the simulated k/offset grid, or DWUG decade "
     "groupings (one g1->g2 pair per lemma).",
 )
+@click.option(
+    "--seed",
+    type=int,
+    default=0,
+    show_default=True,
+    help="Seed for the equal-n downsampling of each corpus pair (and global RNG "
+    "state). The default matches the scorers' own default, so it reproduces runs "
+    "made before this option existed.",
+)
 def score(
     scoring: str,
     sim_dir: Path,
@@ -77,10 +87,14 @@ def score(
     wic_model_dir: Path | None,
     base_model: str,
     dataset: str,
+    seed: int,
 ) -> None:
     """Score every corpus pair under SIM_DIR using SCORING (vmf, wic, or cosine)."""
 
     start_logging(output_dir / "logs", file_name=f"score_{scoring}.log")
+    # Scoring is pure inference, so the determinism flags cost no measurable
+    # throughput here (unlike training, which opts out to keep cudnn.benchmark).
+    make_reproducible(seed, deterministic=True)
     enumerate_corpus_pairs = _PAIR_ENUMERATORS[dataset]
 
     match scoring:
@@ -89,6 +103,7 @@ def score(
                 sim_dir,
                 output_dir / "vmf",
                 hf_model_name=hf_model_name,
+                seed=seed,
                 enumerate_corpus_pairs=enumerate_corpus_pairs,
             )
         case "cosine":
@@ -96,6 +111,7 @@ def score(
                 sim_dir,
                 output_dir / "cosine",
                 hf_model_name=hf_model_name,
+                seed=seed,
                 enumerate_corpus_pairs=enumerate_corpus_pairs,
             )
         case "wic":
@@ -106,6 +122,7 @@ def score(
                 output_dir / "wic",
                 model_dir=wic_model_dir,
                 base_model=base_model,
+                seed=seed,
                 enumerate_corpus_pairs=enumerate_corpus_pairs,
             )
 

@@ -8,6 +8,10 @@ export LD_LIBRARY_PATH := "../diversity_env/lib:" + env("LD_LIBRARY_PATH", "")
 # `just gpu=0 <recipe> ...` rather than editing recipes one by one.
 gpu := "1"
 
+# Needed by torch.use_deterministic_algorithms (set in scoring's make_reproducible):
+# cuBLAS reads it at CUDA init, too early for Python to set it.
+export CUBLAS_WORKSPACE_CONFIG := ":4096:8"
+
 unit-test:
     python -m unittest discover -s './tests' -p '*_tests.py'
 
