@@ -28,6 +28,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd  # type: ignore
 
+from data_processing.vector_cache import CorpusVectorCache
 from data_processing.vector_extraction import ExtractionConfig, WordVectorExtractor
 from simulation.pairing import (
     CorpusPair,
@@ -62,19 +63,8 @@ def _estimate_kappa(r, d):
     return (r * (d - r**2)) / (1 - r**2)
 
 
-def _corpus_vectors(csv_path: Path, extractor: WordVectorExtractor) -> np.ndarray:
-    """Extract the target word's (L2-normalised) contextual vectors for one corpus.
-
-    The simulated corpus carries each occurrence's gold span, so occurrences are
-    located by span rather than re-found with spaCy (which would drop occurrences
-    whose lemma/POS disagree with the annotation).
-    """
-    contexts = pd.read_csv(csv_path).to_dict("records")
-    return extractor.get_word_vectors_from_spans(contexts)
-
-
 def score_pair_vmf(
-    pair: CorpusPair, extractor: WordVectorExtractor, seed: int = 0
+    pair: CorpusPair, cache: CorpusVectorCache, seed: int = 0
 ) -> dict:
     """vMF shift score ``log(kappa_S / kappa_T)`` for one (source, target) pair.
 
@@ -85,8 +75,8 @@ def score_pair_vmf(
     perfectly cancelling or perfectly aligned directions -- neither should occur for
     real embeddings, so if they do it is worth a loud failure.
     """
-    vecs_s = _corpus_vectors(pair.source.csv_path, extractor)
-    vecs_t = _corpus_vectors(pair.target.csv_path, extractor)
+    vecs_s = cache.vectors(pair.source.csv_path)
+    vecs_t = cache.vectors(pair.target.csv_path)
     assert len(vecs_s) >= 2 and len(vecs_t) >= 2, (
         f"{pair.lemma_pos}: < 2 vectors for {pair.source.csv_path.stem} or "
         f"{pair.target.csv_path.stem}; a kept corpus should yield >= 2"
@@ -128,8 +118,8 @@ def get_corpora_vmf_pairs(
     :func:`~simulation.pairing.build_dwug_pairs` gives the diachronic evaluation's single
     pair per lemma. Writes one combined ``vmf_pair_scores.csv`` to ``output_dir``.
     """
-    extractor = WordVectorExtractor.from_config(
-        ExtractionConfig(hf_model_name=hf_model_name)
+    cache = CorpusVectorCache(
+        WordVectorExtractor.from_config(ExtractionConfig(hf_model_name=hf_model_name))
     )
     pairs = build_corpus_pairs(sim_dir)
     assert pairs, (
@@ -139,13 +129,14 @@ def get_corpora_vmf_pairs(
 
     rows = []
     for pair in pairs:
-        record = score_pair_vmf(pair, extractor, seed=seed)
+        record = score_pair_vmf(pair, cache, seed=seed)
         rows.append(record)
         logger.info(
             "%s [%s] %s->%s vMF log-ratio: %.4f (n=%d)",
             pair.lemma_pos, record["scheme"], record["source_variant"],
             record["target_variant"], record["vmf_log_ratio"], record["n_used"],
         )
+    cache.log_summary()
 
     result = pd.DataFrame(rows)
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -2,16 +2,21 @@ import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
 import pandas as pd
 
 from analysis.scored.stats import correlation_table
-from cosine.cosine_estimation import loo_centroid_distance
+from cosine.cosine_estimation import loo_centroid_distance, score_pair_cosine
 from simulation.diversity import diversity_shift, hill_diversity
-from simulation.pairing import build_simulated_pairs, equalise_indices
-from vmf.vmf_estimation import _estimate_kappa, estimate_vmf_parameters
+from simulation.pairing import CorpusPair, build_simulated_pairs, equalise_indices
+from vmf.vmf_estimation import (
+    _estimate_kappa,
+    estimate_vmf_parameters,
+    score_pair_vmf,
+)
 from wic.wic_estimation import score_corpus_wic
 
 
@@ -354,6 +359,70 @@ class CosineDiversityTestCase(unittest.TestCase):
         self.assertAlmostEqual(
             loo_centroid_distance(vecs), _naive_loo_centroid_distance(vecs), places=10
         )
+
+
+class StubCache:
+    """Serves fixed vectors per corpus path, standing in for CorpusVectorCache."""
+
+    def __init__(self, by_path):
+        self.by_path = by_path
+
+    def vectors(self, csv_path):
+        return self.by_path[Path(csv_path).name]
+
+
+def _pair(source_name: str, target_name: str) -> CorpusPair:
+    """A pair whose handles carry only the csv_path the scorers read."""
+    def handle(name):
+        return SimpleNamespace(
+            lemma_pos="run_VERB",
+            csv_path=Path("run_VERB") / name,
+            meta_path=Path("x"),
+            data_path=Path("y"),
+        )
+
+    return CorpusPair("run_VERB", "primary", handle(source_name), handle(target_name))
+
+
+class ScorePairTestCase(unittest.TestCase):
+    """The scorers read their vectors through the cache, and the log-ratio is the
+    documented direction: positive when the target is more diverse."""
+
+    def setUp(self):
+        rng = np.random.default_rng(7)
+        centre = np.array([1.0, 0.0, 0.0])
+        # Source tight (low diversity), target spread (high diversity), equal n so
+        # equalise_indices keeps everything and the expected value is computable.
+        self.tight = _unit_rows(centre + 0.05 * rng.standard_normal((20, 3)))
+        self.spread = _unit_rows(centre + 0.9 * rng.standard_normal((20, 3)))
+        self.cache = StubCache({"s.csv": self.tight, "t.csv": self.spread})
+
+    def test_vmf_log_ratio_matches_kappa_ratio(self):
+        record = score_pair_vmf(_pair("s.csv", "t.csv"), self.cache, seed=0)
+        expected = np.log(
+            estimate_vmf_parameters(self.tight)[1]
+            / estimate_vmf_parameters(self.spread)[1]
+        )
+        self.assertAlmostEqual(record["vmf_log_ratio"], float(expected), places=10)
+        self.assertEqual(record["n_used"], 20)
+        # kappa falls as diversity rises, so a more diverse target gives a positive
+        # log-ratio -- the sign convention the readme and the analysis depend on.
+        self.assertGreater(record["vmf_log_ratio"], 0.0)
+
+    def test_cosine_log_ratio_matches_diversity_ratio(self):
+        record = score_pair_cosine(_pair("s.csv", "t.csv"), self.cache, seed=0)
+        expected = np.log(
+            loo_centroid_distance(self.spread) / loo_centroid_distance(self.tight)
+        )
+        self.assertAlmostEqual(record["cosine_log_ratio"], float(expected), places=10)
+        self.assertEqual(record["n_used"], 20)
+        self.assertGreater(record["cosine_log_ratio"], 0.0)
+
+    def test_unequal_corpora_are_downsampled_to_the_smaller(self):
+        cache = StubCache({"s.csv": self.tight[:12], "t.csv": self.spread})
+        for scorer in (score_pair_vmf, score_pair_cosine):
+            record = scorer(_pair("s.csv", "t.csv"), cache, seed=0)
+            self.assertEqual(record["n_used"], 12, scorer.__name__)
 
     def test_n_equals_two_is_pair_distance(self):
         # With n == 2 the "others" centroid is just the single other vector, so each

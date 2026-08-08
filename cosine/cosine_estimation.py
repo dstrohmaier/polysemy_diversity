@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd  # type: ignore
 
+from data_processing.vector_cache import CorpusVectorCache
 from data_processing.vector_extraction import ExtractionConfig, WordVectorExtractor
 from simulation.pairing import (
     CorpusPair,
@@ -54,18 +55,8 @@ def loo_centroid_distance(vectors: np.ndarray) -> float:
     return float((1.0 - cos).mean())
 
 
-def _corpus_vectors(csv_path: Path, extractor: WordVectorExtractor) -> np.ndarray:
-    """Extract the target word's (L2-normalised) contextual vectors for one corpus.
-
-    Occurrences are located by their stored gold span, matching the vMF scorer's
-    :func:`vmf.vmf_estimation._corpus_vectors` so the two methods see the same set.
-    """
-    contexts = pd.read_csv(csv_path).to_dict("records")
-    return extractor.get_word_vectors_from_spans(contexts)
-
-
 def score_pair_cosine(
-    pair: CorpusPair, extractor: WordVectorExtractor, seed: int = 0
+    pair: CorpusPair, cache: CorpusVectorCache, seed: int = 0
 ) -> dict:
     """Cosine baseline shift ``log(D_cos_T / D_cos_S)`` for one (source, target) pair.
 
@@ -78,8 +69,8 @@ def score_pair_cosine(
     drop below 2 vectors, and a non-positive diversity (which would make the log
     undefined) needs perfectly identical usages.
     """
-    vecs_s = _corpus_vectors(pair.source.csv_path, extractor)
-    vecs_t = _corpus_vectors(pair.target.csv_path, extractor)
+    vecs_s = cache.vectors(pair.source.csv_path)
+    vecs_t = cache.vectors(pair.target.csv_path)
     assert len(vecs_s) >= 2 and len(vecs_t) >= 2, (
         f"{pair.lemma_pos}: < 2 vectors for {pair.source.csv_path.stem} or "
         f"{pair.target.csv_path.stem}; a kept corpus should yield >= 2"
@@ -118,8 +109,8 @@ def get_corpora_cosine_pairs(
     :func:`~simulation.pairing.build_dwug_pairs` gives the diachronic evaluation's single
     pair per lemma. Writes one combined ``cosine_pair_scores.csv`` to ``output_dir``.
     """
-    extractor = WordVectorExtractor.from_config(
-        ExtractionConfig(hf_model_name=hf_model_name)
+    cache = CorpusVectorCache(
+        WordVectorExtractor.from_config(ExtractionConfig(hf_model_name=hf_model_name))
     )
     pairs = build_corpus_pairs(sim_dir)
     assert pairs, (
@@ -129,13 +120,14 @@ def get_corpora_cosine_pairs(
 
     rows = []
     for pair in pairs:
-        record = score_pair_cosine(pair, extractor, seed=seed)
+        record = score_pair_cosine(pair, cache, seed=seed)
         rows.append(record)
         logger.info(
             "%s [%s] %s->%s cosine log-ratio: %.4f (n=%d)",
             pair.lemma_pos, record["scheme"], record["source_variant"],
             record["target_variant"], record["cosine_log_ratio"], record["n_used"],
         )
+    cache.log_summary()
 
     output_dir.mkdir(parents=True, exist_ok=True)
     result = pd.DataFrame(rows)
