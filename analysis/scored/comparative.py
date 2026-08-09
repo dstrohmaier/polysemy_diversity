@@ -5,7 +5,12 @@ Each method writes a per-pair log-ratio score (``vmf_pair_scores.csv``,
 positive value means the target corpus is more diverse than the source. This module
 correlates each method's log-ratio against the ground-truth diversity *shift*
 ``log(qD(T)/qD(S))`` for the three Hill orders q in {0, 1, 2} (richness, Shannon,
-Simpson), using Spearman's rho with bootstrap CIs, grouped by comparison scheme.
+Simpson) and against the evenness shift ``log(E(T)/E(S))``, using Spearman's rho with
+bootstrap CIs, grouped by comparison scheme.
+
+The richness (q=0) and evenness targets are the two dimensions the simulation varies
+independently, so the pair of them says which dimension a single-valued method is
+actually tracking.
 
 Because all methods and all ground-truth shifts share the same orientation
 (positive = target more diverse), the expected rho sign is ``+1`` throughout -- no
@@ -23,6 +28,7 @@ import seaborn as sns  # type: ignore
 from analysis.io import save_fig, write_table
 from analysis.scored.stats import (
     GT_SHIFT_COLS,
+    MEASURE_LABELS,
     N_USED_COL,
     CorpusIterator,
     correlation_table,
@@ -249,18 +255,22 @@ def analyse_comparative(
         write_table(n_sens, tables_dir, "n_sensitivity", convert_col_names=True)
 
     # Per-pair scatter of each method's log-ratio against each ground-truth shift.
+    # Figure stems keep the measure suffix used in the column name ("q0" ... ,
+    # "evenness") so a figure pairs up unambiguously with its table row.
     for method, df in loaded.items():
         *_, score_col = _METHODS[method]
-        for q, gt_col in GT_SHIFT_COLS.items():
+        for measure, gt_col in GT_SHIFT_COLS.items():
+            suffix = gt_col.removeprefix("gt_shift_")
             score_scatter(
-                df, gt_col, f"Ground-truth shift log(qD_T/qD_S), q={q}",
+                df, gt_col, f"Ground-truth shift, {MEASURE_LABELS[measure]}",
                 score_col, f"{method} log-ratio", figures_dir,
-                f"{method}_shift_vs_gt_q{q}", hue_col="scheme",
+                f"{method}_shift_vs_gt_{suffix}", hue_col="scheme",
             )
 
-    for q, gt_col in GT_SHIFT_COLS.items():
-        _plot_rho_by_scheme(corr, gt_col, figures_dir, f"comparative_rho_by_scheme_q{q}")
-        _plot_err_vs_n(loaded, gt_col, figures_dir, f"comparative_err_vs_n_q{q}")
+    for gt_col in GT_SHIFT_COLS.values():
+        suffix = gt_col.removeprefix("gt_shift_")
+        _plot_rho_by_scheme(corr, gt_col, figures_dir, f"comparative_rho_by_scheme_{suffix}")
+        _plot_err_vs_n(loaded, gt_col, figures_dir, f"comparative_err_vs_n_{suffix}")
 
     logger.info(
         "comparative: %d correlation rows across %d method(s)",

@@ -18,13 +18,30 @@ from scipy.stats import bootstrap, spearmanr  # type: ignore
 from analysis.io import save_fig
 from data_processing.shared_loading import CorpusHandle
 from data_processing.simulation_loading import load_sim_corpora
-from simulation.diversity import STANDARD_ORDERS, diversity_shift
+from simulation.diversity import (
+    EVENNESS_KEY,
+    STANDARD_ORDERS,
+    diversity_shift,
+    evenness_shift,
+)
 
 logger = logging.getLogger("div")
 
-# Ground-truth shift column per Hill order, e.g. "gt_shift_q0". These are the
-# targets each method's log-ratio score is correlated against.
-GT_SHIFT_COLS = {q: f"gt_shift_q{q}" for q in STANDARD_ORDERS}
+# Ground-truth shift column per measure: one per Hill order ("gt_shift_q0" ...) plus
+# the evenness ratio E = 1D/0D ("gt_shift_evenness"). These are the targets each
+# method's log-ratio score is correlated against. Keys are the integer q for the Hill
+# orders and EVENNESS_KEY for evenness; anything iterating these must not assume int.
+GT_SHIFT_COLS = {q: f"gt_shift_q{q}" for q in STANDARD_ORDERS} | {
+    EVENNESS_KEY: f"gt_shift_{EVENNESS_KEY}"
+}
+
+# Human-readable measure names for figure labels, keyed as GT_SHIFT_COLS.
+MEASURE_LABELS = {
+    0: "richness (q=0)",
+    1: "Shannon (q=1)",
+    2: "Simpson (q=2)",
+    EVENNESS_KEY: "evenness (E=1D/0D)",
+}
 
 # How a dataset directory is walked to reach the corpora's .meta.json sidecars. Both
 # evaluations store the ground-truth distribution under the same ``sense_probs`` key,
@@ -68,8 +85,8 @@ def pair_ground_truth(
     For each row -- keyed by ``(lemma_pos, source_variant, target_variant)`` -- adds
     one ``gt_shift_q{q}`` column per Hill order (q in {0, 1, 2}), each equal to
     ``log(qD(target) / qD(source))`` computed from the two corpora's stored
-    ``sense_probs``. Rows whose variants lack a ``.meta.json`` get NaN targets and
-    are logged.
+    ``sense_probs``, plus ``gt_shift_evenness`` for ``log(E(T)/E(S))``. Rows whose
+    variants lack a ``.meta.json`` get NaN targets and are logged.
 
     ``iter_fn`` selects the dataset layout: the simulated ``k*_offset_*`` grid by
     default, or :func:`~data_processing.dwug_loading.load_dwug_corpora` for the
@@ -77,7 +94,7 @@ def pair_ground_truth(
     """
     lookup = _sense_probs_lookup(sim_dir, iter_fn)
     out = pair_scores.copy()
-    for q, col in GT_SHIFT_COLS.items():
+    for measure, col in GT_SHIFT_COLS.items():
         values = []
         missing = 0
         for lemma_pos, s_var, t_var in zip(
@@ -88,13 +105,15 @@ def pair_ground_truth(
             if probs_s is None or probs_t is None:
                 values.append(np.nan)
                 missing += 1
+            elif measure == EVENNESS_KEY:
+                values.append(evenness_shift(probs_s, probs_t))
             else:
-                values.append(diversity_shift(probs_s, probs_t, q))
+                values.append(diversity_shift(probs_s, probs_t, measure))
         out[col] = values
         if missing:
             logger.warning(
-                "%d/%d pair rows had no matching .meta.json for q=%d (NaN target)",
-                missing, len(out), q,
+                "%d/%d pair rows had no matching .meta.json for %s (NaN target)",
+                missing, len(out), col,
             )
     return out
 

@@ -30,7 +30,13 @@ import pandas as pd  # type: ignore
 
 from data_processing.dwug_loading import SOURCE_STEM, TARGET_STEM
 from data_processing.wic_conversion import build_comparison_pairs
-from simulation.diversity import STANDARD_ORDERS, diversity_shift, hill_diversity
+from simulation.diversity import (
+    EVENNESS_KEY,
+    STANDARD_ORDERS,
+    diversity_shift,
+    evenness_shift,
+    hill_diversity,
+)
 
 logger = logging.getLogger("div")
 
@@ -164,6 +170,8 @@ def _grouping_meta(
         "n_usages_raw": int(n_raw),
         "n_noise_dropped": int(n_raw - len(sub)),
         "hill_diversity": {str(q): hill_diversity(probs, q) for q in STANDARD_ORDERS},
+        # E = 1D/0D, the evenness of this grouping's cluster distribution.
+        EVENNESS_KEY: hill_diversity(probs, 1) / hill_diversity(probs, 0),
         "entropy_bits": _entropy_bits(probs),
         # sum_i p_i^2 -- the Simpson concentration the WiC method estimates as
         # p(same). Directly comparable to the measured p_same, so it doubles as a
@@ -238,7 +246,8 @@ def prepare_dwug_corpora(
     ``dwug_root`` is the unpacked dataset (containing ``data/`` and ``clusters/opt/``).
     Writes ``output_dir/<lemma>_<pos>/{g1,g2}.{csv,meta.json,data}`` and returns a
     one-row-per-lemma summary (sizes, noise counts, senses per grouping, and the
-    ground-truth shifts) for the caller to write out as a preparation report.
+    ground-truth shifts -- one per Hill order plus evenness) for the caller to write
+    out as a preparation report.
     """
     data_dir = dwug_root / "data"
     clusters_dir = dwug_root / "clusters" / "opt"
@@ -276,6 +285,7 @@ def prepare_dwug_corpora(
             row["n_equalised"] = min(n_g1, n_g2)
             for q in STANDARD_ORDERS:
                 row[f"gt_shift_q{q}"] = diversity_shift(probs_s, probs_t, q)
+            row[f"gt_shift_{EVENNESS_KEY}"] = evenness_shift(probs_s, probs_t)
         rows.append(row)
 
     summary = pd.DataFrame(rows)

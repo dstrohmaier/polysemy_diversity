@@ -9,9 +9,9 @@ import numpy as np
 import pandas as pd
 
 from analysis.scored.comparative import n_sensitivity_table
-from analysis.scored.stats import correlation_table
+from analysis.scored.stats import GT_SHIFT_COLS, correlation_table
 from cosine.cosine_estimation import loo_centroid_distance, score_pair_cosine
-from simulation.diversity import diversity_shift, hill_diversity
+from simulation.diversity import diversity_shift, evenness_shift, hill_diversity
 from simulation.pairing import CorpusPair, build_simulated_pairs, equalise_indices
 from vmf.vmf_estimation import (
     _estimate_kappa,
@@ -213,6 +213,41 @@ class HillDiversityTestCase(unittest.TestCase):
         self.assertGreater(diversity_shift(source, target, 2), 0.0)
 
 
+class EvennessShiftTestCase(unittest.TestCase):
+    def test_shift_identical_is_zero(self):
+        probs = {"a": 0.7, "b": 0.3}
+        self.assertEqual(evenness_shift(probs, probs), 0.0)
+
+    def test_shift_is_q1_minus_q0(self):
+        # E = 1D/0D, so log E(T)/E(S) is the Shannon shift less the richness shift.
+        source = {"a": 0.8, "b": 0.15, "c": 0.05}
+        target = {"a": 0.4, "b": 0.3, "c": 0.2, "d": 0.1}
+        self.assertAlmostEqual(
+            evenness_shift(source, target),
+            diversity_shift(source, target, 1) - diversity_shift(source, target, 0),
+        )
+
+    def test_shift_positive_when_target_more_even(self):
+        # Same richness, so the shift isolates the change in evenness alone.
+        source = {"a": 0.8, "b": 0.1, "c": 0.1}
+        target = {"a": 1 / 3, "b": 1 / 3, "c": 1 / 3}
+        self.assertGreater(evenness_shift(source, target), 0.0)
+
+    def test_shift_ignores_pure_richness_change(self):
+        # Doubling a uniform distribution's support leaves E = 1 on both sides: a
+        # change in richness with the evenness held fixed must not move the metric.
+        self.assertAlmostEqual(evenness_shift([0.25] * 4, [0.125] * 8), 0.0)
+
+    def test_uniform_target_is_maximally_even(self):
+        # E <= 1 with equality only for a uniform distribution, so a uniform target
+        # cannot be less even than any source over the same support.
+        source = {"a": 0.6, "b": 0.25, "c": 0.15}
+        target = {"a": 1 / 3, "b": 1 / 3, "c": 1 / 3}
+        self.assertAlmostEqual(evenness_shift(target, target), 0.0)
+        self.assertGreater(evenness_shift(source, target), 0.0)
+        self.assertLess(evenness_shift(target, source), 0.0)
+
+
 def _write_corpora(root: Path, variants):
     """Materialise ``(lemma_pos, k, offset)`` variants as the on-disk layout.
 
@@ -346,14 +381,16 @@ class NSensitivityTestCase(unittest.TestCase):
     size it needs (readme's vMF/Nagata regime caveat)."""
 
     def _loaded(self, scores, gts, ns):
+        # Every ground-truth shift column gets the same values: this diagnostic is
+        # about error-vs-n, not about telling the measures apart. Built from
+        # GT_SHIFT_COLS so a newly added measure cannot leave the fixture short a
+        # column the table under test requires.
         return {
             "vMF": pd.DataFrame(
                 {
                     "scheme": ["primary"] * len(scores),
                     "vmf_log_ratio": scores,
-                    "gt_shift_q0": gts,
-                    "gt_shift_q1": gts,
-                    "gt_shift_q2": gts,
+                    **{col: gts for col in GT_SHIFT_COLS.values()},
                     "n_used": ns,
                 }
             )
