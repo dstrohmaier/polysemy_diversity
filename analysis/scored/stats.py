@@ -55,6 +55,67 @@ _BOOT_KW = dict(n_resamples=1000, vectorized=False, paired=True, method="percent
 # target by construction -- see simulation.pairing.equalise_indices).
 N_USED_COL = "n_used"
 
+# Normalised PoS tag per raw suffix of a ``lemma_pos`` identifier. The simulation
+# writes uppercase Universal-style tags ("act_NOUN") and DWUG writes lowercase
+# Penn-style ones ("graft_nn"), so a pooled analysis needs one vocabulary. Uppercase
+# is the target because analysis.naming.human_col_name passes an all-caps token
+# through unchanged, whereas "noun" would be title-cased to "Noun" in the tables.
+POS_NORMALISATION = {
+    "NOUN": "NOUN",
+    "VERB": "VERB",
+    "ADJ": "ADJ",
+    "ADV": "ADV",
+    "nn": "NOUN",
+    "vb": "VERB",
+    "jj": "ADJ",
+    "rb": "ADV",
+}
+
+# Order the PoS appear in tables and on figure x-axes: descending vocabulary size
+# (noun 100, verb 100, adj 35, adv 30), which is how the readme frames the study.
+# Alphabetical order would lead with the two smallest vocabularies.
+POS_ORDER = ["NOUN", "VERB", "ADJ", "ADV"]
+
+UNKNOWN_POS = "UNKNOWN"
+
+
+def pos_from_lemma(lemma_pos: str) -> str:
+    """Normalised PoS tag of a ``lemma_pos`` identifier.
+
+    Splits on the final underscore -- the same parse used by
+    :mod:`data_processing.dwug_conversion` -- because a lemma may itself contain one
+    ("take_off_VERB"). The suffix is then mapped onto the shared uppercase vocabulary
+    via :data:`POS_NORMALISATION`.
+
+    An unrecognised tag returns :data:`UNKNOWN_POS` rather than raising: a pooled run
+    over four datasets must not abort because one lemma directory was named oddly, and
+    an ``UNKNOWN`` row stays visible in the output (its own x-axis slot and table rows)
+    instead of being silently merged into a real PoS.
+    """
+    if not isinstance(lemma_pos, str) or "_" not in lemma_pos:
+        return UNKNOWN_POS
+    return POS_NORMALISATION.get(lemma_pos.rsplit("_", 1)[1], UNKNOWN_POS)
+
+
+def add_pos_column(df: pd.DataFrame, col: str = "pos") -> pd.DataFrame:
+    """Return a copy of ``df`` with a normalised PoS column derived from ``lemma_pos``.
+
+    Logs once per unrecognised tag actually seen, so a mis-tagged dataset is loud
+    without emitting one warning per row.
+    """
+    assert "lemma_pos" in df.columns, f"pair scores lack 'lemma_pos': {list(df.columns)}"
+    out = df.copy()
+    out[col] = out["lemma_pos"].map(pos_from_lemma)
+    unknown = sorted(
+        {
+            s.rsplit("_", 1)[-1] if isinstance(s, str) else s
+            for s in out.loc[out[col] == UNKNOWN_POS, "lemma_pos"]
+        }
+    )
+    if unknown:
+        logger.warning("Unrecognised PoS tag(s) %s mapped to %s", unknown, UNKNOWN_POS)
+    return out
+
 
 def _sense_probs_lookup(
     sim_dir: Path, iter_fn: CorpusIterator = load_sim_corpora
@@ -146,13 +207,18 @@ def correlation_table(
     df: pd.DataFrame,
     score_col: str,
     predictors: list[str],
-    group_col: str = "k_senses",
+    group_col: str | list[str] = "k_senses",
 ) -> pd.DataFrame:
     """Spearman correlation of ``score_col`` vs each predictor, conditional on ``group_col``.
 
     One row per ``(group, predictor)`` with the rho, its bootstrap CI, the group size,
     and a ``note`` explaining any NaN rho. Predictor columns with NaNs (e.g. an
     unmatched ground-truth shift) are dropped pairwise.
+
+    ``group_col`` may name one column or a list of them. With a list the table gains
+    one output column per key -- ``pos`` and ``scheme``, say -- and one row per (key
+    combination, predictor); this is what the pooled analysis's two-way PoS x scheme
+    breakdown groups on.
 
     ``n_used`` (the post-downsample corpus size) is summarised alongside each rho over
     the rows that survived the dropna: the vMF bias is a function of n, so a rho is
@@ -166,8 +232,18 @@ def correlation_table(
     table and figures distinguish them from the small-sample ``note="n<3"`` case.
     """
     assert N_USED_COL in df.columns, f"pair scores lack {N_USED_COL!r}: {list(df.columns)}"
+    group_cols = [group_col] if isinstance(group_col, str) else list(group_col)
+    missing = [c for c in group_cols if c not in df.columns]
+    assert not missing, f"grouping column(s) absent from the frame: {missing}"
+
     rows = []
-    for group_val, sub in df.groupby(group_col):
+    # pandas yields a scalar key for a string groupby and a tuple for a list groupby
+    # (even a one-element list), so pass the bare string when there is a single key.
+    # That keeps the single-key path -- and its output column order -- as it was.
+    by = group_cols if len(group_cols) > 1 else group_cols[0]
+    for group_val, sub in df.groupby(by):
+        keys = group_val if isinstance(group_val, tuple) else (group_val,)
+        group_key = dict(zip(group_cols, keys))
         for predictor in predictors:
             pair = sub[[score_col, predictor, N_USED_COL]].dropna()
             xs = pair[score_col].to_numpy()
@@ -188,12 +264,13 @@ def correlation_table(
                 rho, lo, hi, n = spearman_with_ci(xs, ys)
             if note:
                 logger.warning(
-                    "%s=%s vs %s: correlation undefined (%s, n=%d)",
-                    group_col, group_val, predictor, note, n,
+                    "%s vs %s: correlation undefined (%s, n=%d)",
+                    ", ".join(f"{c}={v}" for c, v in group_key.items()),
+                    predictor, note, n,
                 )
             rows.append(
                 {
-                    group_col: group_val,
+                    **group_key,
                     "predictor": predictor,
                     "spearmanr": rho,
                     "ci_low": lo,

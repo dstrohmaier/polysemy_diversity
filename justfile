@@ -156,10 +156,17 @@ analyse-comparative-all:
 analyse-comparative-dwug scores_dir="output/scores/dwug_en" dwug_dir="source_data/dwug_corpora" output_dir="output/analysis/dwug_en":
     python run_analysis.py comparative {{ scores_dir }} {{ output_dir }} {{ dwug_dir }} --dataset dwug
 
+# Pooled all-PoS comparison. Takes the *parent* dirs and discovers the per-PoS
+# datasets under them, rather than one dataset like analyse-comparative.
+analyse-comparative-pooled scores_root="output/scores" sim_root="source_data/simulated_data" output_dir="output/analysis/pooled":
+    python run_analysis.py comparative_pooled {{ scores_root }} {{ output_dir }} {{ sim_root }}
+
 # Globs on the output side (not simulated_data) so results of datasets whose sim
-# dirs have since been removed are cleaned up too.
+# dirs have since been removed are cleaned up too. The second pattern catches the
+# pooled mode, whose out_root is output/analysis/pooled/comparative_pooled; two
+# explicit patterns rather than comparative* so a future mode is not swept up.
 clean-comparative-all:
-    rm -rf output/analysis/*/comparative
+    rm -rf output/analysis/*/comparative output/analysis/*/comparative_pooled
 
 # --- Data Transfer
 

@@ -62,6 +62,8 @@ COL_NAMES = {
     "k_senses": "Senses (k)",
     "n_senses_available": "Senses available",
     "n_senses_observed": "Senses observed",
+    "n_lemmata": "Lemmata (n)",
+    "n_pos": "PoS (n)",
 }
 
 # Tokens that keep their exact casing rather than being title-cased or upper-cased:
@@ -70,8 +72,10 @@ LOWER_TOKENS = {"n", "k", "q", "p", "e", "vs", "per", "of", "used"}
 
 # Columns whose cells are schema identifiers rather than free text or data values,
 # so they get the same readable rewriting as the headers ("same_lemma" -> "Same
-# lemma"). ``note`` is deliberately absent: its cells are prose ("n<3").
-LABEL_VALUE_COLS = ("scheme", "predictor", "method", "lemma_pos")
+# lemma"). ``note`` is deliberately absent: its cells are prose ("n<3"). A ``pos``
+# cell is already an all-caps tag ("NOUN"), which human_col_name passes through
+# unchanged; it is listed so an unexpected lower-case tag still renders readably.
+LABEL_VALUE_COLS = ("scheme", "predictor", "method", "lemma_pos", "pos", "dataset")
 
 
 def human_col_name(col_name: str) -> str:

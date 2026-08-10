@@ -9,7 +9,21 @@ import numpy as np
 import pandas as pd
 
 from analysis.scored.comparative import n_sensitivity_table
-from analysis.scored.stats import GT_SHIFT_COLS, correlation_table
+from analysis.scored.pooled import (
+    SMALL_N_NOTE,
+    SMALL_N_THRESHOLD,
+    add_small_n_note,
+    discover_pos_datasets,
+    pooled_correlation_table,
+    pos_scheme_correlation_table,
+)
+from analysis.scored.stats import (
+    GT_SHIFT_COLS,
+    UNKNOWN_POS,
+    add_pos_column,
+    correlation_table,
+    pos_from_lemma,
+)
 from cosine.cosine_estimation import loo_centroid_distance, score_pair_cosine
 from simulation.diversity import diversity_shift, evenness_shift, hill_diversity
 from simulation.pairing import CorpusPair, build_simulated_pairs, equalise_indices
@@ -320,15 +334,20 @@ class CorrelationTableTestCase(unittest.TestCase):
     """The degenerate-predictor guard: a constant predictor (e.g. the q=0 richness
     shift within a same-k scheme) must be flagged, not silently NaN'd via scipy."""
 
-    def _df(self, scores, predictor_vals, group="along_slope", n_used=None):
-        return pd.DataFrame(
+    def _df(self, scores, predictor_vals, group="along_slope", n_used=None, pos=None):
+        # ``pos`` is added only when a test asks for it, so the single-key tests
+        # exercise exactly the frame shape the per-PoS analysis passes.
+        frame = pd.DataFrame(
             {
-                "scheme": [group] * len(scores),
+                "scheme": group if isinstance(group, list) else [group] * len(scores),
                 "score": scores,
                 "gt": predictor_vals,
                 "n_used": n_used if n_used is not None else [100] * len(scores),
             }
         )
+        if pos is not None:
+            frame["pos"] = pos if isinstance(pos, list) else [pos] * len(scores)
+        return frame
 
     def test_constant_predictor_flagged(self):
         # gt is identically 0 (the q0 same-k case): rho undefined, note explains why.
@@ -375,26 +394,68 @@ class CorrelationTableTestCase(unittest.TestCase):
         with self.assertRaises(AssertionError):
             correlation_table(df, "score", ["gt"], group_col="scheme")
 
+    def test_single_element_list_group_col_matches_string(self):
+        # pandas yields a scalar key for a string groupby but a 1-tuple for a
+        # one-element list; both must produce the same table, or the pooled mode's
+        # multi-key path would silently differ from the per-PoS one.
+        df = self._df([0.1, 0.4, 0.9], [0.2, 0.5, 0.8])
+        as_string = correlation_table(df, "score", ["gt"], group_col="scheme")
+        as_list = correlation_table(df, "score", ["gt"], group_col=["scheme"])
+        pd.testing.assert_frame_equal(as_string, as_list)
+
+    def test_two_key_group_col_yields_one_column_per_key(self):
+        df = self._df(
+            [0.1, 0.4, 0.9, 0.2, 0.5, 0.8],
+            [0.2, 0.5, 0.8, 0.1, 0.6, 0.7],
+            group=["primary"] * 3 + ["along_k"] * 3,
+            pos=["NOUN"] * 3 + ["VERB"] * 3,
+        )
+        out = correlation_table(df, "score", ["gt"], group_col=["pos", "scheme"])
+        self.assertIn("pos", out.columns)
+        self.assertIn("scheme", out.columns)
+        # The failure mode if the group tuple is used as a dict key verbatim.
+        self.assertNotIn("['pos', 'scheme']", out.columns)
+        self.assertEqual(len(out), 2)
+
+    def test_two_key_group_values_are_unpacked_not_tupled(self):
+        df = self._df(
+            [0.1, 0.4, 0.9],
+            [0.2, 0.5, 0.8],
+            group="primary",
+            pos="NOUN",
+        )
+        out = correlation_table(df, "score", ["gt"], group_col=["pos", "scheme"])
+        self.assertEqual(out.iloc[0]["pos"], "NOUN")
+        self.assertEqual(out.iloc[0]["scheme"], "primary")
+
+    def test_missing_group_column_rejected(self):
+        # A clear assertion, not a bare KeyError out of pandas.
+        df = self._df([0.1, 0.4, 0.9], [0.2, 0.5, 0.8])
+        with self.assertRaises(AssertionError):
+            correlation_table(df, "score", ["gt"], group_col=["pos"])
+
 
 class NSensitivityTestCase(unittest.TestCase):
     """Error-vs-n diagnostic: separates a weak method from one run below the sample
     size it needs (readme's vMF/Nagata regime caveat)."""
 
-    def _loaded(self, scores, gts, ns):
+    def _loaded(self, scores, gts, ns, schemes=None, pos=None):
         # Every ground-truth shift column gets the same values: this diagnostic is
         # about error-vs-n, not about telling the measures apart. Built from
         # GT_SHIFT_COLS so a newly added measure cannot leave the fixture short a
-        # column the table under test requires.
-        return {
-            "vMF": pd.DataFrame(
-                {
-                    "scheme": ["primary"] * len(scores),
-                    "vmf_log_ratio": scores,
-                    **{col: gts for col in GT_SHIFT_COLS.values()},
-                    "n_used": ns,
-                }
-            )
-        }
+        # column the table under test requires. ``pos`` is omitted unless a test
+        # asks for it, keeping the single-key fixtures at the per-PoS frame shape.
+        frame = pd.DataFrame(
+            {
+                "scheme": schemes if schemes is not None else ["primary"] * len(scores),
+                "vmf_log_ratio": scores,
+                **{col: gts for col in GT_SHIFT_COLS.values()},
+                "n_used": ns,
+            }
+        )
+        if pos is not None:
+            frame["pos"] = pos
+        return {"vMF": frame}
 
     def test_error_shrinking_with_n_gives_negative_rho(self):
         # Error falls as n grows: the signature of a sample-size-driven deficit.
@@ -416,6 +477,204 @@ class NSensitivityTestCase(unittest.TestCase):
     def test_unscored_method_skipped(self):
         # analyse_comparative drops methods whose CSV is absent; the table follows.
         self.assertTrue(n_sensitivity_table({"vMF": None}).empty)
+
+    def test_group_col_list_matches_string_default(self):
+        loaded = self._loaded([1.0, 0.7, 0.55, 0.5], [0.5] * 4, [25, 50, 100, 400])
+        pd.testing.assert_frame_equal(
+            n_sensitivity_table(loaded),
+            n_sensitivity_table(loaded, group_col=["scheme"]),
+        )
+
+    def test_two_key_grouping_splits_by_pos(self):
+        loaded = self._loaded(
+            [1.0, 0.7, 0.55, 0.9, 0.6, 0.5],
+            [0.5] * 6,
+            [25, 50, 100, 25, 50, 100],
+            schemes=["primary"] * 6,
+            pos=["NOUN"] * 3 + ["VERB"] * 3,
+        )
+        out = n_sensitivity_table(loaded, group_col=["pos", "scheme"])
+        q2 = out[out["predictor"] == "gt_shift_q2"]
+        self.assertEqual(sorted(q2["pos"]), ["NOUN", "VERB"])
+
+
+class PosDerivationTestCase(unittest.TestCase):
+    """The two evaluations tag PoS differently ("act_NOUN" vs "graft_nn"), but the
+    pooled analysis groups on one vocabulary, so the mapping must be total and stable."""
+
+    def test_simulation_tags_pass_through_uppercase(self):
+        self.assertEqual(pos_from_lemma("act_NOUN"), "NOUN")
+        self.assertEqual(pos_from_lemma("lose_VERB"), "VERB")
+        self.assertEqual(pos_from_lemma("quick_ADJ"), "ADJ")
+        self.assertEqual(pos_from_lemma("quickly_ADV"), "ADV")
+
+    def test_dwug_tags_map_to_the_simulation_vocabulary(self):
+        # Asserted equal to the simulation's result, so the two datasets provably
+        # land in one bucket rather than merely both being uppercase.
+        self.assertEqual(pos_from_lemma("graft_nn"), pos_from_lemma("act_NOUN"))
+        self.assertEqual(pos_from_lemma("bar_vb"), pos_from_lemma("lose_VERB"))
+
+    def test_multiword_lemma_splits_from_the_right(self):
+        # Guards the rsplit-vs-split choice: a lemma may contain an underscore.
+        self.assertEqual(pos_from_lemma("take_off_VERB"), "VERB")
+
+    def test_unrecognised_tag_is_flagged_not_dropped(self):
+        # A pooled run over four datasets must not abort on one odd directory name.
+        self.assertEqual(pos_from_lemma("foo_XYZ"), UNKNOWN_POS)
+        self.assertEqual(pos_from_lemma("nolemma"), UNKNOWN_POS)
+
+    def test_add_pos_column_leaves_caller_frame_untouched(self):
+        df = pd.DataFrame({"lemma_pos": ["act_NOUN", "graft_nn"]})
+        out = add_pos_column(df)
+        self.assertNotIn("pos", df.columns)
+        self.assertEqual(list(out["pos"]), ["NOUN", "NOUN"])
+
+
+class SmallNNoteTestCase(unittest.TestCase):
+    """A thin cell is reported with its rho and CI plus a flag, not dropped: the
+    adverb vocabulary is 30 lemmata, and dropping thin cells would remove exactly the
+    column the PoS comparison exists to show."""
+
+    def _table(self, ns, notes=None, n_col="n"):
+        return pd.DataFrame(
+            {
+                n_col: ns,
+                "spearmanr": [0.5] * len(ns),
+                "note": notes if notes is not None else [""] * len(ns),
+            }
+        )
+
+    def test_small_cell_flagged_and_kept(self):
+        out = add_small_n_note(self._table([5, 500]))
+        self.assertEqual(len(out), 2)
+        self.assertEqual(out.iloc[0]["note"], SMALL_N_NOTE)
+        self.assertEqual(out.iloc[1]["note"], "")
+        self.assertTrue(np.isfinite(out.iloc[0]["spearmanr"]))
+
+    def test_note_is_appended_not_replaced(self):
+        out = add_small_n_note(self._table([2], notes=["n<3"]))
+        self.assertEqual(out.iloc[0]["note"], f"n<3; {SMALL_N_NOTE}")
+
+    def test_cell_at_threshold_not_flagged(self):
+        # The comparison is "<", not "<=".
+        out = add_small_n_note(self._table([SMALL_N_THRESHOLD]))
+        self.assertEqual(out.iloc[0]["note"], "")
+
+    def test_n_pairs_column_supported(self):
+        # n_sensitivity_table names its count n_pairs, not n.
+        out = add_small_n_note(self._table([5], n_col="n_pairs"), n_col="n_pairs")
+        self.assertEqual(out.iloc[0]["note"], SMALL_N_NOTE)
+
+
+class DiscoverPosDatasetsTestCase(unittest.TestCase):
+    """Discovery must require the *scores* side: the corpora root holds non-dataset
+    entries (a real ``most_diverse_noun/stale/`` exists) and dirs simulated but not
+    yet scored, either of which would join the pool as a silently empty dataset."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        self.scores = self.root / "scores"
+        self.corpora = self.root / "corpora"
+        self.scores.mkdir()
+        self.corpora.mkdir()
+
+    def _make(self, name, with_scores=True, with_corpora=True):
+        if with_corpora:
+            (self.corpora / name).mkdir(parents=True, exist_ok=True)
+        if with_scores:
+            method_dir = self.scores / name / "cosine"
+            method_dir.mkdir(parents=True, exist_ok=True)
+            (method_dir / "cosine_pair_scores.csv").write_text("lemma_pos\n")
+        else:
+            (self.scores / name).mkdir(parents=True, exist_ok=True)
+
+    def test_dataset_present_in_both_roots_is_found(self):
+        self._make("most_diverse_noun")
+        self.assertEqual(
+            discover_pos_datasets(self.scores, self.corpora), ["most_diverse_noun"]
+        )
+
+    def test_corpus_dir_without_scores_is_skipped(self):
+        # The "stale/" and "simulated but never scored" case.
+        self._make("most_diverse_noun")
+        self._make("stale", with_scores=False)
+        self.assertEqual(
+            discover_pos_datasets(self.scores, self.corpora), ["most_diverse_noun"]
+        )
+
+    def test_scores_dir_without_corpora_is_skipped(self):
+        self._make("most_diverse_noun")
+        self._make("orphan_scores", with_corpora=False)
+        self.assertEqual(
+            discover_pos_datasets(self.scores, self.corpora), ["most_diverse_noun"]
+        )
+
+    def test_result_is_sorted(self):
+        # Determinism of the pooled frame's row order.
+        for name in ["most_diverse_verb", "most_diverse_adj", "most_diverse_noun"]:
+            self._make(name)
+        self.assertEqual(
+            discover_pos_datasets(self.scores, self.corpora),
+            ["most_diverse_adj", "most_diverse_noun", "most_diverse_verb"],
+        )
+
+
+class PosSchemeTableTestCase(unittest.TestCase):
+    """The two-way breakdown: whether the method ranking established on nouns holds
+    for the other parts of speech, and whether a PoS effect is really a scheme one."""
+
+    def _loaded(self):
+        rng = np.random.default_rng(0)
+        rows = []
+        for pos, lemma_tag in [("NOUN", "NOUN"), ("VERB", "VERB")]:
+            for scheme in ["primary", "along_k"]:
+                for i in range(6):
+                    rows.append(
+                        {
+                            "lemma_pos": f"w{i}_{lemma_tag}",
+                            "pos": pos,
+                            "scheme": scheme,
+                            "source_variant": "a",
+                            "target_variant": "b",
+                            "cosine_log_ratio": float(rng.normal()),
+                            "n_used": 100,
+                            **{c: float(rng.normal()) for c in GT_SHIFT_COLS.values()},
+                        }
+                    )
+        return {"cosine": pd.DataFrame(rows)}
+
+    def test_schema_has_pos_and_scheme_columns(self):
+        out = pos_scheme_correlation_table(self._loaded())
+        for col in ("method", "pos", "scheme", "predictor", "spearmanr", "n_lemmata"):
+            self.assertIn(col, out.columns)
+        # note is the reader's footnote column and belongs last.
+        self.assertEqual(out.columns[-1], "note")
+
+    def test_row_count_is_methods_times_pos_times_schemes_times_predictors(self):
+        # The combinatorial guard: catches a silently dropped group.
+        out = pos_scheme_correlation_table(self._loaded())
+        self.assertEqual(len(out), 1 * 2 * 2 * len(GT_SHIFT_COLS))
+
+    def test_each_pos_scheme_cell_present(self):
+        out = pos_scheme_correlation_table(self._loaded())
+        cells = set(zip(out["pos"], out["scheme"]))
+        self.assertEqual(
+            cells,
+            {("NOUN", "primary"), ("NOUN", "along_k"),
+             ("VERB", "primary"), ("VERB", "along_k")},
+        )
+
+    def test_rowless_frame_yields_empty_table_not_keyerror(self):
+        # discover_pos_datasets admits a dataset on the strength of the pair-scores
+        # CSV existing, so a header-only file reaches here. correlation_table then
+        # returns a frame with no columns at all, which the group-count merge and
+        # the note reorder would both index into.
+        empty = self._loaded()["cosine"].iloc[0:0]
+        for table in (pos_scheme_correlation_table, pooled_correlation_table):
+            with self.subTest(table=table.__name__):
+                self.assertTrue(table({"cosine": empty}).empty)
 
 
 def _naive_loo_centroid_distance(vectors: np.ndarray) -> float:

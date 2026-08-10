@@ -10,6 +10,9 @@ ANALYSIS_TYPE selects what to analyse:
   method's per-pair log-ratio against the ground-truth diversity shifts
   ``log(qD(T)/qD(S))`` for q in {0, 1, 2}, grouped by comparison scheme, as a table
   and per-scheme dot-plot figures.
+* ``comparative_pooled`` -- the same comparison pooled over every part of speech,
+  plus the two-way PoS x scheme breakdown. Tightens the CIs (a per-PoS rho rests on
+  30-100 lemmata) and says whether the method ranking holds across PoS.
 
 The descriptive modes take ``DATA_DIR OUTPUT_DIR`` (DATA_DIR = a simulated_data
 dataset dir). The ``comparative`` mode takes ``SCORES_DIR OUTPUT_DIR SIM_DIR``:
@@ -17,6 +20,10 @@ SCORES_DIR is the dataset's scoring output (``output/scores/<dataset>``) and SIM
 is its corpus dir (for the ``.meta.json`` sense-probability sidecars). Pass
 ``--dataset dwug`` there to analyse the diachronic evaluation, whose corpus dir is
 the one written by ``prepare_dwug.py``.
+
+``comparative_pooled`` takes the *parent* directories instead -- SCORES_ROOT is
+``output/scores`` and SIM_ROOT is ``source_data/simulated_data`` -- and discovers the
+per-PoS datasets under them. Restrict it with repeated ``--pos-dataset`` options.
 
 Each mode writes CSV/Markdown/LaTeX tables and PDF figures under
 ``OUTPUT_DIR/<analysis_type>/``.
@@ -35,6 +42,10 @@ from pathlib import Path  # noqa: E402
 import click  # noqa: E402
 
 from analysis.scored.comparative import analyse_comparative  # noqa: E402
+from analysis.scored.pooled import (  # noqa: E402
+    analyse_comparative_pooled,
+    discover_pos_datasets,
+)
 from analysis.simulated_data.raw_simulated import analyse_raw_simulated  # noqa: E402
 from analysis.simulated_data.wic_simulated import analyse_wic_simulated  # noqa: E402
 from data_processing.dwug_loading import load_dwug_corpora  # noqa: E402
@@ -48,7 +59,9 @@ _CORPUS_ITERATORS = {"simulated": load_sim_corpora, "dwug": load_dwug_corpora}
 @click.command()
 @click.argument(
     "analysis_type",
-    type=click.Choice(["raw_simulated", "wic_simulated", "comparative"]),
+    type=click.Choice(
+        ["raw_simulated", "wic_simulated", "comparative", "comparative_pooled"]
+    ),
 )
 @click.argument("data_dir", type=Path)
 @click.argument("output_dir", type=Path)
@@ -61,18 +74,28 @@ _CORPUS_ITERATORS = {"simulated": load_sim_corpora, "dwug": load_dwug_corpora}
     help="[comparative] Layout of SIM_DIR, selecting how corpus .meta.json sidecars "
     "are enumerated for the ground truth.",
 )
+@click.option(
+    "--pos-dataset",
+    "pos_datasets",
+    multiple=True,
+    help="[comparative_pooled] Dataset dir name present under both SCORES_ROOT and "
+    "SIM_ROOT (e.g. most_diverse_noun). Repeatable; defaults to every dataset the "
+    "two roots have in common.",
+)
 def main(
     analysis_type: str,
     data_dir: Path,
     output_dir: Path,
     sim_dir: Path | None,
     dataset: str,
+    pos_datasets: tuple[str, ...],
 ) -> None:
     """Run ANALYSIS_TYPE, writing tables and figures under OUTPUT_DIR/<analysis_type>/.
 
     For the descriptive modes, DATA_DIR is a simulated_data dataset dir. For
     ``comparative``, DATA_DIR is the dataset's scoring output dir and SIM_DIR
-    (required) is its corpus dir.
+    (required) is its corpus dir. For ``comparative_pooled`` both are the *parent*
+    dirs, and the per-PoS datasets under them are discovered.
     """
     out_root = output_dir / analysis_type
     out_root.mkdir(parents=True, exist_ok=True)
@@ -91,6 +114,36 @@ def main(
                 )
             analyse_comparative(
                 data_dir, sim_dir, out_root, iter_fn=_CORPUS_ITERATORS[dataset]
+            )
+        case "comparative_pooled":
+            if sim_dir is None:
+                raise click.UsageError(
+                    "comparative_pooled requires SIM_ROOT (the parent of the per-PoS "
+                    "corpus dirs, e.g. source_data/simulated_data)."
+                )
+            # Walked once: the discovered names both supply the default and name the
+            # alternatives when an explicit --pos-dataset does not exist.
+            try:
+                found = discover_pos_datasets(data_dir, sim_dir)
+            except NotADirectoryError as exc:
+                raise click.UsageError(str(exc)) from exc
+            datasets = list(pos_datasets) or found
+            missing = [name for name in datasets if name not in found]
+            if missing:
+                raise click.UsageError(
+                    f"dataset(s) {missing} are not present and scored under both "
+                    f"{data_dir} and {sim_dir}; found {found}."
+                )
+            if not datasets:
+                raise click.UsageError(
+                    f"no scored dataset found under both {data_dir} and {sim_dir}."
+                )
+            analyse_comparative_pooled(
+                data_dir,
+                sim_dir,
+                out_root,
+                datasets,
+                iter_fn=_CORPUS_ITERATORS[dataset],
             )
 
 
