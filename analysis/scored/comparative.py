@@ -71,7 +71,9 @@ def _load_method(
     subdir, filename, _ = _METHODS[method]
     path = scores_dir / subdir / filename
     if not path.exists():
-        logger.warning("No %s at %s; %s excluded from comparison.", filename, path, method)
+        logger.warning(
+            "No %s at %s; %s excluded from comparison.", filename, path, method
+        )
         return None
     return pair_ground_truth(pd.read_csv(path), sim_dir, iter_fn)
 
@@ -96,7 +98,15 @@ def shift_correlation_table(loaded: dict[str, pd.DataFrame]) -> pd.DataFrame:
 
     if not parts:
         return pd.DataFrame(
-            columns=["method", "scheme", "predictor", "spearmanr", "ci_low", "ci_high", "n"]
+            columns=[
+                "method",
+                "scheme",
+                "predictor",
+                "spearmanr",
+                "ci_low",
+                "ci_high",
+                "n",
+            ]
         )
     return pd.concat(parts, ignore_index=True)
 
@@ -160,8 +170,9 @@ def n_sensitivity_table(loaded: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _plot_err_vs_n(loaded: dict[str, pd.DataFrame], gt_col: str, figures_dir: Path,
-                   name: str) -> None:
+def _plot_err_vs_n(
+    loaded: dict[str, pd.DataFrame], gt_col: str, figures_dir: Path, name: str
+) -> None:
     """Per-pair absolute error against ``n_used``, one colour per method.
 
     The visual companion to :func:`n_sensitivity_table`: a downward trend for vMF but
@@ -179,8 +190,14 @@ def _plot_err_vs_n(loaded: dict[str, pd.DataFrame], gt_col: str, figures_dir: Pa
         pair = df[[score_col, gt_col, N_USED_COL]].dropna()
         if pair.empty:
             continue
-        ax.scatter(pair[N_USED_COL], (pair[score_col] - pair[gt_col]).abs(),
-                   s=12, alpha=0.6, color=palette[method], label=method)
+        ax.scatter(
+            pair[N_USED_COL],
+            (pair[score_col] - pair[gt_col]).abs(),
+            s=12,
+            alpha=0.6,
+            color=palette[method],
+            label=method,
+        )
         plotted = True
     if not plotted:
         plt.close(fig)
@@ -191,13 +208,15 @@ def _plot_err_vs_n(loaded: dict[str, pd.DataFrame], gt_col: str, figures_dir: Pa
     save_fig(fig, figures_dir, name)
 
 
-def _plot_rho_by_scheme(corr: pd.DataFrame, gt_col: str, figures_dir: Path, name: str) -> None:
+def _plot_rho_by_scheme(
+    corr_df: pd.DataFrame, gt_col: str, figures_dir: Path, name: str
+) -> None:
     """Dot plot of Spearman rho against comparison scheme, one colour per method.
 
     x = scheme, y = rho, colour = method, CI error bars -- the dot-plot convention
     used across the scored figures (not a heatmap).
     """
-    sub = corr[corr["predictor"] == gt_col].copy()
+    sub = corr_df[corr_df["predictor"] == gt_col].copy()
     if sub.empty:
         return
     palette = _method_palette()
@@ -207,11 +226,30 @@ def _plot_rho_by_scheme(corr: pd.DataFrame, gt_col: str, figures_dir: Path, name
     fig, ax = plt.subplots()
     width = 0.8 / max(len(methods), 1)
     for i, method in enumerate(methods):
-        grp = sub[sub["method"] == method].set_index("scheme").reindex(schemes).reset_index()
-        xs = [schemes.index(s) + (i - (len(methods) - 1) / 2) * width for s in grp["scheme"]]
-        yerr = [grp["spearmanr"] - grp["ci_low"], grp["ci_high"] - grp["spearmanr"]]
-        ax.errorbar(xs, grp["spearmanr"], yerr=yerr, marker="o", linestyle="none",
-                    capsize=3, color=palette[method], label=method)
+        by_scheme_df = (
+            sub[sub["method"] == method]
+            .set_index("scheme")
+            .reindex(schemes)
+            .reset_index()
+        )
+        xs = [
+            schemes.index(s) + (i - (len(methods) - 1) / 2) * width
+            for s in by_scheme_df["scheme"]
+        ]
+        yerr = [
+            by_scheme_df["spearmanr"] - by_scheme_df["ci_low"],
+            by_scheme_df["ci_high"] - by_scheme_df["spearmanr"],
+        ]
+        ax.errorbar(
+            xs,
+            by_scheme_df["spearmanr"],
+            yerr=yerr,
+            marker="o",
+            linestyle="none",
+            capsize=3,
+            color=palette[method],
+            label=method,
+        )
     ax.set_xticks(range(len(schemes)))
     ax.set_xticklabels(schemes)
     ax.set_xlabel("Comparison scheme")
@@ -241,11 +279,13 @@ def analyse_comparative(
     loaded = {m: _load_method(scores_dir, m, sim_dir, iter_fn) for m in _METHOD_ORDER}
     loaded = {m: df for m, df in loaded.items() if df is not None}
     if not loaded:
-        logger.warning("No method pair-scores found under %s; nothing to analyse.", scores_dir)
+        logger.warning(
+            "No method pair-scores found under %s; nothing to analyse.", scores_dir
+        )
         return
 
-    corr = shift_correlation_table(loaded)
-    write_table(corr, tables_dir, "shift_correlations", convert_col_names=True)
+    corr_df = shift_correlation_table(loaded)
+    write_table(corr_df, tables_dir, "shift_correlations", convert_col_names=True)
 
     # Sample-size diagnostic: each rho above is computed at a particular n_used, and
     # the vMF estimator's bias depends on it. This table and its figures say whether a
@@ -262,25 +302,39 @@ def analyse_comparative(
         for measure, gt_col in GT_SHIFT_COLS.items():
             suffix = gt_col.removeprefix("gt_shift_")
             score_scatter(
-                df, gt_col, f"Ground-truth shift, {MEASURE_LABELS[measure]}",
-                score_col, f"{method} log-ratio", figures_dir,
-                f"{method}_shift_vs_gt_{suffix}", hue_col="scheme",
+                df,
+                gt_col,
+                f"Ground-truth shift, {MEASURE_LABELS[measure]}",
+                score_col,
+                f"{method} log-ratio",
+                figures_dir / method,
+                f"shift_vs_gt_{suffix}",
+                hue_col="scheme",
             )
 
     for gt_col in GT_SHIFT_COLS.values():
         suffix = gt_col.removeprefix("gt_shift_")
-        _plot_rho_by_scheme(corr, gt_col, figures_dir, f"comparative_rho_by_scheme_{suffix}")
-        _plot_err_vs_n(loaded, gt_col, figures_dir, f"comparative_err_vs_n_{suffix}")
+        _plot_rho_by_scheme(
+            corr_df,
+            gt_col,
+            figures_dir / "rho_by_scheme",
+            f"rho_by_scheme_{suffix}",
+        )
+        _plot_err_vs_n(
+            loaded, gt_col, figures_dir / "error_n", f"comparative_err_vs_n_{suffix}"
+        )
 
     logger.info(
         "comparative: %d correlation rows across %d method(s)",
-        len(corr), corr["method"].nunique(),
+        len(corr_df),
+        corr_df["method"].nunique(),
     )
     if not n_sens.empty:
         spans = n_sens[n_sens["note"] == ""]
         logger.info(
             "n-sensitivity: %d/%d cells had a varying n_used (range %s-%s overall)",
-            len(spans), len(n_sens),
+            len(spans),
+            len(n_sens),
             f"{n_sens['n_used_min'].min():.0f}" if len(n_sens) else "-",
             f"{n_sens['n_used_max'].max():.0f}" if len(n_sens) else "-",
         )

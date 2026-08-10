@@ -21,6 +21,22 @@ from utilities.latex_utils import df_to_latex, format_float
 logger = logging.getLogger("div")
 
 
+def _drop_empty_note(df: pd.DataFrame) -> pd.DataFrame:
+    """Return ``df`` without a ``note`` column that holds no notes.
+
+    Notes are written as ``""`` when a row is unexceptional, so a table where no
+    row needed flagging carries a column of empty strings. Returns ``df``
+    unchanged (not a copy) when there is a ``note`` column with content, or none
+    at all; never mutates the caller's frame.
+    """
+    if "note" not in df.columns:
+        return df
+    notes = df["note"]
+    if notes.isna().all() or (notes.fillna("").astype(str).str.strip() == "").all():
+        return df.drop(columns="note")
+    return df
+
+
 def write_table(
     df: pd.DataFrame,
     tables_dir: Path,
@@ -37,8 +53,14 @@ def write_table(
     ``convert_col_names`` to render the LaTeX headers via
     :func:`~utilities.latex_utils.col_formatter` (e.g. ``spearmanr`` -> ``SRC``,
     ``F1`` -> ``F``\\ :sub:`1`); this replaces the default header escaping.
+
+    A ``note`` column carrying no notes (every cell empty or NaN) is dropped from
+    all three outputs: it is present only to flag exceptional rows, so when nothing
+    is flagged it is an empty column in the paper's tables.
     """
     tables_dir.mkdir(parents=True, exist_ok=True)
+
+    df = _drop_empty_note(df)
 
     csv_path = tables_dir / f"{name}.csv"
     md_path = tables_dir / f"{name}.md"
@@ -50,6 +72,10 @@ def write_table(
     if cols_to_formatter is None:
         float_cols = [c for c in df.columns if pd.api.types.is_float_dtype(df[c])]
         cols_to_formatter = {c: format_float for c in float_cols}
+    elif "note" not in df.columns:
+        # The caller may name ``note`` explicitly; drop it so df_to_latex is not
+        # handed a formatter for a column that is no longer there.
+        cols_to_formatter = {c: f for c, f in cols_to_formatter.items() if c != "note"}
     tex_path.write_text(
         df_to_latex(
             df,
