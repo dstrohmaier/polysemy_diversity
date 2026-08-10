@@ -213,6 +213,16 @@ The two evaluations differ only in how pairs are enumerated and where the ground
 - Nagata, Takamura, Otani, & Kawasaki (2023). [Variance Matters: Detecting Semantic Differences without Corpus/Word Alignment](https://doi.org/10.18653/v1/2023.emnlp-main.965). *EMNLP 2023*, 15609–15622.
 
 
+### Hill-Measures and Evenness
+
+- Hill (1973). [Diversity and Evenness: A Unifying Notation and Its Consequences](https://doi.org/10.2307/1934352). *Ecology*, 54(2), 427–432.
+- Tuomisto (2012). [An Updated Consumer's Guide to Evenness and Related Indices](https://doi.org/10.1111/j.1600-0706.2011.19897.x). *Oikos*, 121(8), 1203–1218.
+
+
+### Other Metrics
+
+- Hoffman, Lambon Ralph, & Rogers (2013). [Semantic Diversity: A Measure of Semantic Ambiguity Based on Variability in the Contextual Usage of Words](https://doi.org/10.3758/s13428-012-0278-x). *Behavior Research Methods*, 45(3), 718–730.
+
 ### Embeddings and Models
 
 - Ethayarajh (2019). [How Contextual are Contextualized Word Representations? Comparing the Geometry of BERT, ELMo, and GPT-2 Embeddings](https://doi.org/10.18653/v1/D19-1006). *EMNLP-IJCNLP 2019*, 55–65.
