@@ -1,7 +1,17 @@
+"""LaTeX rendering of analysis tables.
+
+Everything here is specific to the ``.tex`` output: cell formatters that emit
+LaTeX escapes (``\\%``, ``\\checkmark``), the header formatter, and the
+:class:`~pandas.io.formats.style.Styler` wrapper that produces the final table
+body. Format-agnostic naming lives in :mod:`analysis.naming`.
+"""
+
 from typing import Any, Callable, Optional
 
 import pandas as pd  # type: ignore
 import numpy as np  # type: ignore
+
+from analysis.naming import human_col_name
 
 # Rendered in place of a missing (NaN) cell. The analysis pivots are sparse -- most
 # (corpus, matrix) cells are empty -- so every numeric formatter routes NaN here
@@ -54,36 +64,24 @@ def format_bool(content: bool) -> str:
 def col_formatter(col_name: str) -> str:
     """Render a column name as its LaTeX header.
 
-    Covers this project's evaluation metrics -- accuracy, the Spearman rank
-    correlation of the similarity task, and the OCS/PCS relation scores -- the
-    matrix sub-types used as headers in the metric tables, plus a few generic
-    statistics. Unknown names (e.g. corpus columns) pass through unchanged.
+    Builds on :func:`human_col_name` so the LaTeX headers and the Markdown ones
+    cannot drift apart, then applies the LaTeX-only rewrites: sub/superscripted
+    metric names, and escaping of the characters that :func:`human_col_name` may
+    legitimately introduce (``%``, ``&``, ``_``). Unknown names pass through
+    readably rather than raw.
     """
     match col_name:
-        case "accuracy":
-            return "Acc."
-        case "spearmanr" | "spearman_r":
-            return "SRC"
-        case "ocs":
-            return "OCS"
-        case "pcs":
-            return "PCS"
-        case "coverage":
-            return "Cov."
-        # Matrix sub-types (metric-table column headers). sg_neg is rewritten so
-        # its underscore is not left raw when column escaping is bypassed.
-        case "sg_neg":
-            return "sg-neg"
-        case "count" | "log" | "ppmi" | "svd" | "baseline":
-            return col_name
         case "F1":
             return "F\\textsubscript{1}"
         case "F2":
             return "F\\textsubscript{2}"
         case "R2":
             return "R\\textsuperscript{2}"
-        case _:
-            return col_name
+
+    label = human_col_name(col_name)
+    for char in ("&", "%", "#", "_"):
+        label = label.replace(char, f"\\{char}")
+    return label
 
 
 def df_to_latex(

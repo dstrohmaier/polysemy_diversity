@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd  # type: ignore
 import seaborn as sns  # type: ignore
 
-from analysis.io import save_fig, write_table
+from analysis.io import human_col_name, save_fig, write_table
 from analysis.scored.stats import (
     GT_SHIFT_COLS,
     MEASURE_LABELS,
@@ -203,18 +203,18 @@ def _plot_err_vs_n(
         plt.close(fig)
         return
     ax.set_xlabel("n used (post-downsample corpus size)")
-    ax.set_ylabel(f"|score - {gt_col}|")
-    ax.legend(title="method", fontsize="small")
+    ax.set_ylabel(f"|score - {human_col_name(gt_col)}|")
+    ax.legend(title="Method", fontsize="small")
     save_fig(fig, figures_dir, name)
 
 
 def _plot_rho_by_scheme(
     corr_df: pd.DataFrame, gt_col: str, figures_dir: Path, name: str
 ) -> None:
-    """Dot plot of Spearman rho against comparison scheme, one colour per method.
+    """Dot plot of the SRC against comparison scheme, one colour per method.
 
-    x = scheme, y = rho, colour = method, CI error bars -- the dot-plot convention
-    used across the scored figures (not a heatmap).
+    x = scheme, y = SRC (Spearman's rank correlation), colour = method, CI error
+    bars -- the dot-plot convention used across the scored figures (not a heatmap).
     """
     sub = corr_df[corr_df["predictor"] == gt_col].copy()
     if sub.empty:
@@ -251,11 +251,11 @@ def _plot_rho_by_scheme(
             label=method,
         )
     ax.set_xticks(range(len(schemes)))
-    ax.set_xticklabels(schemes)
+    ax.set_xticklabels([human_col_name(s) for s in schemes])
     ax.set_xlabel("Comparison scheme")
-    ax.set_ylabel("Spearman's rho")
+    ax.set_ylabel("SRC (Spearman's rank correlation)")
     ax.axhline(0, color="grey", linewidth=0.8, linestyle=":")
-    ax.legend(title="method", fontsize="small")
+    ax.legend(title="Method", fontsize="small")
     save_fig(fig, figures_dir, name)
 
 
@@ -304,7 +304,7 @@ def analyse_comparative(
             score_scatter(
                 df,
                 gt_col,
-                f"Ground-truth shift, {MEASURE_LABELS[measure]}",
+                f"GT shift, {MEASURE_LABELS[measure]}",
                 score_col,
                 f"{method} log-ratio",
                 figures_dir / method,

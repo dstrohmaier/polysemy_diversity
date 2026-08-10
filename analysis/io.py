@@ -6,6 +6,13 @@ Markdown for quick human reading in the repo, and LaTeX for direct inclusion in 
 paper -- while :func:`write_csv` emits CSV only, for tables too wide or long to be
 useful as Markdown/LaTeX. These helpers keep that output contract in one place so all
 modes stay consistent.
+
+This is the entry point of a three-module output layer, ordered by how much they
+know about the output format: :mod:`analysis.naming` maps raw column names to
+readable labels and knows about no format at all (figures use it too);
+:mod:`analysis.latex_utils` adds the ``.tex``-specific escaping and Styler
+rendering; and this module drives both. :func:`~analysis.naming.human_col_name` is
+re-exported here so callers labelling a figure need only one import.
 """
 
 import logging
@@ -16,7 +23,13 @@ import matplotlib.pyplot as plt
 import pandas as pd  # type: ignore
 from matplotlib.figure import Figure
 
-from utilities.latex_utils import df_to_latex, format_float
+from analysis.latex_utils import df_to_latex, format_float
+from analysis.naming import LABEL_VALUE_COLS, human_col_name
+
+# Re-exported so the output layer presents one import surface: callers that write
+# tables or label figures reach for analysis.io and need not know whether a helper
+# is format-agnostic (analysis.naming) or LaTeX-specific (analysis.latex_utils).
+__all__ = ["human_col_name", "save_fig", "write_csv", "write_table"]
 
 logger = logging.getLogger("div")
 
@@ -37,6 +50,25 @@ def _drop_empty_note(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _humanise_label_values(df: pd.DataFrame) -> pd.DataFrame:
+    """Rewrite identifier-valued cells in :data:`~analysis.naming.LABEL_VALUE_COLS`.
+
+    Only touches strings that still look like raw schema identifiers -- no
+    whitespace, and not already containing an acronym's casing -- so a value that
+    is already prose is left alone. Copies before writing; never mutates the
+    caller's frame.
+    """
+    cols = [c for c in LABEL_VALUE_COLS if c in df.columns]
+    if not cols:
+        return df
+    out = df.copy()
+    for col in cols:
+        out[col] = out[col].map(
+            lambda v: human_col_name(v) if isinstance(v, str) and " " not in v else v
+        )
+    return out
+
+
 def write_table(
     df: pd.DataFrame,
     tables_dir: Path,
@@ -48,37 +80,51 @@ def write_table(
     """Write ``df`` to ``tables_dir`` as ``name``.{csv,md,tex}.
 
     ``cols_to_formatter`` maps a column (or list of columns) to a LaTeX cell
-    formatter from :mod:`utilities.latex_utils`. When omitted, every float column
-    is rendered with :data:`~utilities.latex_utils.format_float`. Set
+    formatter from :mod:`analysis.latex_utils`. When omitted, every float column
+    is rendered with :data:`~analysis.latex_utils.format_float`. Set
     ``convert_col_names`` to render the LaTeX headers via
-    :func:`~utilities.latex_utils.col_formatter` (e.g. ``spearmanr`` -> ``SRC``,
+    :func:`~analysis.latex_utils.col_formatter` (e.g. ``spearmanr`` -> ``SRC``,
     ``F1`` -> ``F``\\ :sub:`1`); this replaces the default header escaping.
 
-    A ``note`` column carrying no notes (every cell empty or NaN) is dropped from
-    all three outputs: it is present only to flag exceptional rows, so when nothing
-    is flagged it is an empty column in the paper's tables.
+    The CSV is the machine-readable output: it keeps the raw column names and the
+    full schema, so downstream loaders see a stable table. The Markdown and LaTeX
+    are the human-readable outputs, and get three readability passes: headers go
+    through :func:`~analysis.naming.human_col_name` (``gt_shift_q0`` -> ``GT shift
+    (q=0)``); identifier-valued cells in
+    :data:`~analysis.naming.LABEL_VALUE_COLS` get the same rewriting
+    (``same_lemma`` -> ``Same lemma``); and a ``note`` column carrying no notes
+    (every cell empty or NaN) is dropped, since it only exists to flag
+    exceptional rows.
     """
     tables_dir.mkdir(parents=True, exist_ok=True)
-
-    df = _drop_empty_note(df)
 
     csv_path = tables_dir / f"{name}.csv"
     md_path = tables_dir / f"{name}.md"
     tex_path = tables_dir / f"{name}.tex"
 
     df.to_csv(csv_path, index=index)
-    md_path.write_text(df.to_markdown(index=index), encoding="utf-8")
+
+    # Presentation-only frame: the CSV above already has the raw schema.
+    shown = _humanise_label_values(_drop_empty_note(df))
+    md_path.write_text(
+        shown.rename(columns=human_col_name).to_markdown(index=index),
+        encoding="utf-8",
+    )
 
     if cols_to_formatter is None:
-        float_cols = [c for c in df.columns if pd.api.types.is_float_dtype(df[c])]
+        float_cols = [c for c in shown.columns if pd.api.types.is_float_dtype(shown[c])]
         cols_to_formatter = {c: format_float for c in float_cols}
-    elif "note" not in df.columns:
-        # The caller may name ``note`` explicitly; drop it so df_to_latex is not
-        # handed a formatter for a column that is no longer there.
-        cols_to_formatter = {c: f for c, f in cols_to_formatter.items() if c != "note"}
+    else:
+        # Formatters are keyed by raw column name; drop any naming a column that
+        # is not in the shown frame (e.g. ``note``) so Styler.format is not handed
+        # a missing subset.
+        cols_to_formatter = {
+            c: f for c, f in cols_to_formatter.items()
+            if not isinstance(c, str) or c in shown.columns
+        }
     tex_path.write_text(
         df_to_latex(
-            df,
+            shown,
             cols_to_formatter,
             index=index,
             # df_to_latex forbids escaping and converting headers at once.

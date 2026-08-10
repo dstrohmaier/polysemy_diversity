@@ -15,7 +15,7 @@ import pandas as pd  # type: ignore
 import seaborn as sns  # type: ignore
 from scipy.stats import bootstrap, spearmanr  # type: ignore
 
-from analysis.io import save_fig
+from analysis.io import human_col_name, save_fig
 from data_processing.shared_loading import CorpusHandle
 from data_processing.simulation_loading import load_sim_corpora
 from simulation.diversity import (
@@ -247,4 +247,8 @@ def score_scatter(
         kind="scatter",
     )
     grid.set_axis_labels(x_label, score_label)
+    # The hue legend title defaults to the raw column name ("k_senses"); give it
+    # the same readable treatment as the table headers.
+    if grid.legend is not None:
+        grid.legend.set_title(human_col_name(hue_col))
     save_fig(grid.figure, figures_dir, name)
