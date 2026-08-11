@@ -22,6 +22,8 @@ Comparison schemes (readme "Source and Target Corpus")
   source (steepest slope, lowest k).
 * ``along_k``     -- corpora that share a slope but differ in k; S = lower k.
 * ``along_slope`` -- corpora that share k but differ in slope; S = steeper slope.
+  Emitted at each stride in :data:`SLOPE_STRIDES`: neighbours, and a wider move that
+  puts a slope comparison on the same magnitude footing as a k comparison.
 * ``diachronic``  -- the DWUG evaluation's single comparison per lemma: the
   1810-1860 grouping against the 1960-2010 one.
 """
@@ -44,6 +46,31 @@ logger = logging.getLogger("div")
 # scheme tag. The comparative analysis groups correlations by scheme, which then
 # yields one row per (method, ground-truth order) across all lemmata.
 DIACHRONIC_SCHEME = "diachronic"
+
+# How many offset steps an ``along_slope`` comparison spans. One step is the natural
+# neighbour comparison; the wider stride exists because the two axes are not on
+# comparable footings -- a single offset step moves ground-truth diversity roughly 2-6x
+# less than a single k step (Shannon 6x, Simpson 3x, evenness 2x on the simulated
+# grid), so one-step slope comparisons cluster near zero and are hard to read next to
+# the k comparisons drawn beside them. A 3-step slope move lands in the same magnitude
+# range as a 1-step k move, which is what makes the two families comparable on one
+# colour scale in the grid figures.
+#
+# Both strides are emitted under the same ``along_slope`` scheme: they are the same
+# kind of comparison, differing only in how far they reach, and the analysis
+# distinguishes them by the offset distance between the pair's endpoints.
+SLOPE_STRIDES = (1, 3)
+
+# Spacing and low end of the simulation's offset ladder, matching ``simulate_data.py``'s
+# ``--offset-step`` / ``--offset-min`` defaults. Pairing reads finished corpora off disk
+# and never sees that config, so the values are restated here; they only number the
+# rungs a strided walk partitions on, and a run with a different grid still pairs
+# correctly as long as these match it.
+#
+# The partition counts rungs from OFFSET_MIN rather than from zero, so the first wide
+# arrow starts at the steepest slope and the row is covered from its edge inward.
+OFFSET_STEP = 0.1
+OFFSET_MIN = -0.5
 
 
 @dataclass(frozen=True)
@@ -135,32 +162,91 @@ def build_simulated_pairs(sim_dir: Path) -> list[CorpusPair]:
             for source, target in _adjacent_pairs(cs, key=lambda c: c.k):
                 pairs.append(CorpusPair(lemma_pos, "along_k", source, target))
 
-        # along_slope: fix k, vary offset.
+        # along_slope: fix k, vary offset -- at each stride in SLOPE_STRIDES.
         by_k: dict[int, list[Corpus]] = defaultdict(list)
         for c in group:
             by_k[c.k].append(c)
         for cs in by_k.values():
-            for source, target in _adjacent_pairs(cs, key=lambda c: c.offset):
-                pairs.append(CorpusPair(lemma_pos, "along_slope", source, target))
+            for stride in SLOPE_STRIDES:
+                for source, target in _adjacent_pairs(
+                    cs,
+                    key=lambda c: c.offset,
+                    stride=stride,
+                    anchor_index=_offset_index,
+                ):
+                    pairs.append(CorpusPair(lemma_pos, "along_slope", source, target))
 
     logger.info("built %d corpus pairs across %d lemmata", len(pairs), len(by_lemma))
     return pairs
 
 
-def _adjacent_pairs(corpora, key):
-    """Yield ``(source, target)`` for each consecutive pair along a sorted axis.
+def _offset_index(corpus: Corpus) -> int:
+    """Position of a corpus's offset on the simulation's offset ladder.
 
-    Sorting by ``key`` (k or offset) and pairing neighbours keeps the comparison
-    to a single step on that axis; ``_order`` then assigns source/target by
-    expected diversity. Consecutive rather than all-vs-all so the shift is a clean
-    one-step change on the dimension under study.
+    The grid is a regular step apart (``_offset_grid`` in
+    :mod:`simulation.corpus_simulation`), so the index follows from the value and
+    needs no reference to the run's config. Counting from :data:`OFFSET_MIN` puts rung
+    0 at the steepest slope; rounding absorbs float drift, keeping a value like
+    ``-0.30000000000000004`` on its intended rung.
+
+    This is the anchor a strided ``along_slope`` walk partitions on, so that every
+    lemma cuts the offset axis at the same offsets regardless of which variants it
+    happens to have on disk.
+    """
+    return round((corpus.offset - OFFSET_MIN) / OFFSET_STEP)
+
+
+def _adjacent_pairs(corpora, key, stride: int = 1, anchor_index=None):
+    """Yield ``(source, target)`` for each pair ``stride`` apart along a sorted axis.
+
+    Sorting by ``key`` (k or offset) and pairing along that order keeps the comparison
+    to a clean move on one dimension; ``_order`` then assigns source/target by
+    expected diversity. Strided rather than all-vs-all so the shift stays a known
+    number of steps on the dimension under study.
+
+    ``stride=1`` is the neighbour case and slides one position at a time, so every
+    adjacent pair is covered. A wider stride instead steps **end to end**: the next
+    pair starts where the previous one finished (0->3, 3->6, ...), rather than sliding
+    (0->3, 1->4, ...). Consecutive multi-step comparisons would otherwise re-use the
+    same corpora and, drawn as arrows on the design grid, would lie on top of one
+    another. A partitioning of the axis says as much with a fraction of the pairs --
+    and every pair here costs a scoring run.
+
+    The partition is anchored to ``anchor_index`` -- a position *in the full axis*,
+    not in this lemma's own list -- so that every lemma cuts the axis at the same
+    places. Anchoring to list position instead would shift a lemma's cut points
+    whenever it is missing a variant (the simulation drops variants a lemma has too
+    few senses or sentences for), scattering the wide arrows across every offset and
+    filling the row rather than partitioning it.
+
+    A wider stride is what the slope axis needs: one offset step moves diversity
+    several times less than one k step (see :data:`SLOPE_STRIDES`), so single-step
+    slope comparisons sit near zero and are hard to read against the k comparisons
+    they are drawn beside.
 
     Two corpora with the same (k, offset) -- an accidental duplicate variant in a
-    lemma dir -- would be indistinguishable on both axes; such a neighbour pair is
-    skipped with a warning rather than passed to ``_order`` (which cannot orient it).
+    lemma dir -- would be indistinguishable on both axes; such a pair is skipped with
+    a warning rather than passed to ``_order`` (which cannot orient it).
     """
     ordered = sorted(corpora, key=key)
-    for a, b in zip(ordered, ordered[1:]):
+    if stride > 1 and anchor_index is not None:
+        # Keep only the corpora sitting on a partition boundary, then walk those.
+        # A boundary this lemma lacks simply drops the pair rather than sliding the
+        # cut onto a neighbouring offset.
+        ordered = [c for c in ordered if anchor_index(c) % stride == 0]
+        for a, b in zip(ordered, ordered[1:]):
+            if anchor_index(b) - anchor_index(a) != stride:
+                continue
+            if a.k == b.k and a.offset == b.offset:
+                logger.warning(
+                    "%s: duplicate variant (k=%d, offset=%.4f) for %s and %s; skipping pair",
+                    a.lemma_pos, a.k, a.offset, a.csv_path.name, b.csv_path.name,
+                )
+                continue
+            yield _order(a, b)
+        return
+    for i in range(0, len(ordered) - stride, stride):
+        a, b = ordered[i], ordered[i + stride]
         if a.k == b.k and a.offset == b.offset:
             logger.warning(
                 "%s: duplicate variant (k=%d, offset=%.4f) for %s and %s; skipping pair",

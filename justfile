@@ -121,6 +121,11 @@ score-dwug-all dwug_dir="source_data/dwug_corpora" output_dir="output/scores/dwu
         just score-dwug "$method" "{{ dwug_dir }}" "{{ output_dir }}"
     done
 
+# --- Scoring all
+
+score-all: score-cosine-all score-wic-all score-vmf-all score-dwug-all
+
+
 # --- Analysis
 
 analyse-raw-simulated sim_dir output_dir:

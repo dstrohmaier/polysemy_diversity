@@ -28,6 +28,7 @@ import matplotlib.pyplot as plt
 import pandas as pd  # type: ignore
 
 from analysis.io import save_fig, write_table
+from analysis.scored.grids import write_grid_figures
 from analysis.scored.methods import (
     GT_COLS,
     METHOD_ORDER,
@@ -168,6 +169,11 @@ def analyse_comparative(
         plot_err_vs_n(
             loaded, gt_col, figures_dir / "error_n", f"comparative_err_vs_n_{suffix}"
         )
+
+    # The same scores laid back onto the simulation's (k, offset) design grid, which
+    # the per-scheme rho above collapses. Skips itself on a dataset with no such grid
+    # (the diachronic evaluation).
+    write_grid_figures(loaded, figures_dir, tables_dir)
 
     logger.info(
         "comparative: %d correlation rows across %d method(s)",

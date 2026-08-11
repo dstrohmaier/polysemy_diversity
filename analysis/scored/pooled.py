@@ -41,6 +41,7 @@ import matplotlib.pyplot as plt
 import pandas as pd  # type: ignore
 
 from analysis.io import human_col_name, save_fig, write_csv, write_table
+from analysis.scored.grids import write_grid_figures
 from analysis.scored.methods import (
     GT_COLS,
     METHOD_ORDER,
@@ -478,6 +479,11 @@ def analyse_comparative_pooled(
             figures_dir / "rho_by_pos",
             f"pos_scheme_rho_{suffix}",
         )
+
+    # The design-grid figures. Pooling is where they are most informative: every cell
+    # of the (k, offset) grid carries roughly four times the lemmata a single-PoS run
+    # gives it, so the sparse high-k rows become readable.
+    write_grid_figures(loaded, figures_dir, tables_dir, prefix="pooled_")
 
     pos_seen = sorted({p for df in loaded.values() for p in df[POS_COL].unique()})
     lemmata = len({lp for df in loaded.values() for lp in df["lemma_pos"].unique()})

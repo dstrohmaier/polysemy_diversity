@@ -203,6 +203,43 @@ def spearman_with_ci(
     return rho, float(res.confidence_interval.low), float(res.confidence_interval.high), n
 
 
+def rho_or_note(
+    xs: np.ndarray, ys: np.ndarray, with_ci: bool = True
+) -> tuple[float, float, float, int, str]:
+    """Spearman rho of ``xs`` vs ``ys``, or NaNs with a ``note`` saying why not.
+
+    Returns ``(rho, ci_low, ci_high, n, note)``. An empty note means the rho is real;
+    otherwise all three statistics are NaN and the note is one of:
+
+    ``"n<3"``
+        Fewer than three paired points: the correlation is undefined.
+    ``"constant predictor"`` / ``"constant score"``
+        One side does not vary, so the rank correlation is undefined. Detected up
+        front rather than letting ``spearmanr`` return NaN with a
+        DegenerateDataWarning. Some groups are constant *by construction* -- the q=0
+        (richness) shift is ``log(k_T / k_S)``, so it is fixed for any group that
+        pins both k values -- so this is an expected outcome, not a data problem.
+
+    ``with_ci=False`` returns the point estimate with NaN bounds, skipping the 1000
+    bootstrap resamples. The per-cell grids in :mod:`analysis.scored.grids` use it:
+    they compute a rho for every (cell, method, measure) -- hundreds per figure -- and
+    a heatmap cell or an arrow has nowhere to show a CI anyway.
+
+    Shared by :func:`correlation_table` and those grids so the two cannot drift apart
+    on which cells they consider undefined.
+    """
+    n = len(xs)
+    if n < 3:
+        return float("nan"), float("nan"), float("nan"), n, "n<3"
+    if np.ptp(ys) == 0 or np.ptp(xs) == 0:
+        note = "constant predictor" if np.ptp(ys) == 0 else "constant score"
+        return float("nan"), float("nan"), float("nan"), n, note
+    if not with_ci:
+        return _spearman_stat(xs, ys), float("nan"), float("nan"), n, ""
+    rho, lo, hi, n = spearman_with_ci(xs, ys)
+    return rho, lo, hi, n, ""
+
+
 def correlation_table(
     df: pd.DataFrame,
     score_col: str,
@@ -224,12 +261,9 @@ def correlation_table(
     the rows that survived the dropna: the vMF bias is a function of n, so a rho is
     only interpretable next to the n it was computed at.
 
-    Some (group, predictor) cells are undefined *by construction* rather than for
-    lack of data: e.g. the q=0 (richness) shift is identically 0 for every pair that
-    shares k, so its column is constant and Spearman is undefined. Those are detected
-    up front -- a constant predictor never reaches ``spearmanr`` (which would emit a
-    scipy DegenerateDataWarning) -- and marked ``note="constant predictor"`` so the
-    table and figures distinguish them from the small-sample ``note="n<3"`` case.
+    Cells that are undefined -- for lack of data or *by construction* -- carry a
+    ``note`` saying which, rather than a bare NaN; see :func:`rho_or_note` for the
+    cases and why each is detected up front.
     """
     assert N_USED_COL in df.columns, f"pair scores lack {N_USED_COL!r}: {list(df.columns)}"
     group_cols = [group_col] if isinstance(group_col, str) else list(group_col)
@@ -249,19 +283,7 @@ def correlation_table(
             xs = pair[score_col].to_numpy()
             ys = pair[predictor].to_numpy()
             n_used = pair[N_USED_COL]
-            note = ""
-            if len(xs) < 3:
-                rho = lo = hi = float("nan")
-                n = len(xs)
-                note = "n<3"
-            elif np.ptp(ys) == 0 or np.ptp(xs) == 0:
-                # A constant score or predictor makes the rank correlation undefined;
-                # skip it explicitly rather than let spearmanr return NaN with a warning.
-                rho = lo = hi = float("nan")
-                n = len(xs)
-                note = "constant predictor" if np.ptp(ys) == 0 else "constant score"
-            else:
-                rho, lo, hi, n = spearman_with_ci(xs, ys)
+            rho, lo, hi, n, note = rho_or_note(xs, ys)
             if note:
                 logger.warning(
                     "%s vs %s: correlation undefined (%s, n=%d)",

@@ -31,6 +31,7 @@ from analysis.scored.stats import (
     spearman_with_ci,
 )
 from data_processing.simulation_loading import load_sim_corpora
+from simulation.pairing import PairBuilder, build_simulated_pairs
 
 logger = logging.getLogger("div")
 
@@ -78,11 +79,24 @@ def load_method(
     method: str,
     sim_dir: Path,
     iter_fn: CorpusIterator = load_sim_corpora,
+    pair_builder: PairBuilder | None = build_simulated_pairs,
 ) -> pd.DataFrame | None:
     """Load one method's pair scores with ground-truth shift columns attached.
 
     Returns ``None`` (with a warning) if the method's pair-scores CSV is absent, so
     the comparative analysis degrades gracefully when only some methods have run.
+
+    Rows are restricted to the pairs ``pair_builder`` currently defines. A pair-scores
+    CSV is a record of whatever the pairing emitted when the scorer last ran, so after
+    a change to :mod:`simulation.pairing` it can hold comparisons the design no longer
+    includes -- scoring is expensive enough that the CSVs outlive several such
+    changes. Dropping them here keeps the analysis a view of the current design rather
+    than of the union of every design that has ever been scored, and the count is
+    logged so a large discrepancy is visible rather than silent.
+
+    ``pair_builder=None`` skips the filter, for a layout the simulated builder cannot
+    enumerate (the diachronic evaluation passes its own ``iter_fn`` and has a single
+    pair per lemma anyway).
     """
     subdir, filename, _ = METHODS[method]
     path = scores_dir / subdir / filename
@@ -91,19 +105,67 @@ def load_method(
             "No %s at %s; %s excluded from comparison.", filename, path, method
         )
         return None
-    return pair_ground_truth(pd.read_csv(path), sim_dir, iter_fn)
+    df = pd.read_csv(path)
+    if pair_builder is not None:
+        df = _current_pairs_only(df, sim_dir, method, pair_builder)
+    return pair_ground_truth(df, sim_dir, iter_fn)
+
+
+def _current_pairs_only(
+    df: pd.DataFrame, sim_dir: Path, method: str, pair_builder: PairBuilder
+) -> pd.DataFrame:
+    """Drop scored rows that the current pairing no longer emits.
+
+    Matches on ``(lemma_pos, scheme, source_variant, target_variant)`` -- the identity
+    a scorer writes per pair. A directory the builder cannot walk yields no pairs at
+    all; that is left alone rather than filtered to nothing, since an empty build is
+    far more likely to mean "wrong layout" than "no pairs exist".
+    """
+    try:
+        current = {
+            (p.lemma_pos, p.scheme, p.source.csv_path.stem, p.target.csv_path.stem)
+            for p in pair_builder(sim_dir)
+        }
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not rebuild pairs from %s (%s); using scores as-is.",
+                       sim_dir, exc)
+        return df
+    if not current:
+        return df
+    keys = list(
+        zip(df["lemma_pos"], df["scheme"], df["source_variant"], df["target_variant"])
+    )
+    keep = [k in current for k in keys]
+    dropped = len(df) - sum(keep)
+    if dropped:
+        logger.warning(
+            "%s: %d/%d scored pairs are not in the current pairing (stale scores); "
+            "excluded from the analysis.", method, dropped, len(df),
+        )
+    return df[keep].reset_index(drop=True)
 
 
 def load_all_methods(
-    scores_dir: Path, sim_dir: Path, iter_fn: CorpusIterator = load_sim_corpora
+    scores_dir: Path,
+    sim_dir: Path,
+    iter_fn: CorpusIterator = load_sim_corpora,
+    pair_builder: PairBuilder | None = build_simulated_pairs,
 ) -> dict[str, pd.DataFrame]:
     """Every method with pair scores under ``scores_dir``, ground truth attached.
 
     Methods whose CSV is absent are omitted rather than mapped to ``None``, so
     callers can iterate the result without a per-entry emptiness check.
+
+    ``pair_builder`` is forwarded to :func:`load_method`; the diachronic evaluation
+    passes ``None``, its corpora not being the simulated grid.
     """
+    # The simulated pair builder can only enumerate the simulated layout, so a
+    # non-simulated iterator implies there is nothing to filter against.
+    if iter_fn is not load_sim_corpora:
+        pair_builder = None
     loaded = {
-        m: load_method(scores_dir, m, sim_dir, iter_fn) for m in METHOD_ORDER
+        m: load_method(scores_dir, m, sim_dir, iter_fn, pair_builder)
+        for m in METHOD_ORDER
     }
     return {m: df for m, df in loaded.items() if df is not None}
 
