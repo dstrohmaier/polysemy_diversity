@@ -27,9 +27,7 @@ from analysis.scored.stats import (
 from cosine.cosine_estimation import loo_centroid_distance, score_pair_cosine
 from simulation.diversity import diversity_shift, evenness_shift, hill_diversity
 from simulation.pairing import (
-    SLOPE_STRIDES,
     CorpusPair,
-    _offset_index,
     build_simulated_pairs,
     equalise_indices,
 )
@@ -269,8 +267,12 @@ class EvennessShiftTestCase(unittest.TestCase):
 
 
 def _span(pair) -> float:
-    """Offset distance a pair covers, rounded past the grid's float drift."""
-    return round(pair.target.offset - pair.source.offset, 2)
+    """Offset distance a pair covers, rounded past the grid's float drift.
+
+    Taken source-to-target, which runs from the larger offset to the smaller (steep
+    to flat, i.e. toward diversity), so the difference is positive that way round.
+    """
+    return round(pair.source.offset - pair.target.offset, 2)
 
 
 def _write_corpora(root: Path, variants):
@@ -301,32 +303,31 @@ class PairingTestCase(unittest.TestCase):
 
     def test_primary_source_is_low_diversity_anchor(self):
         # Every "primary" pair sources from the lowest-k, steepest-slope corpus.
+        # Steepest is the *largest* offset: applied = baseline + offset.
         primary = [p for p in self.pairs if p.scheme == "primary"]
         self.assertTrue(
-            all(p.source.csv_path.stem == "k3_offset_m0.10" for p in primary)
+            all(p.source.csv_path.stem == "k3_offset_p0.10" for p in primary)
         )
         self.assertEqual(len(primary), self.n_corpora - 1)
 
     def test_along_slope_source_is_steeper(self):
-        # Same k, so the source (lower diversity) has the smaller offset.
+        # Same k, so the source (lower diversity) has the larger offset -- a steeper
+        # Zipf law concentrates mass on the top senses.
         for p in (p for p in self.pairs if p.scheme == "along_slope"):
             self.assertEqual(p.source.k, p.target.k)
-            self.assertLess(p.source.offset, p.target.offset)
+            self.assertGreater(p.source.offset, p.target.offset)
 
     def test_along_k_source_has_lower_k(self):
         for p in (p for p in self.pairs if p.scheme == "along_k"):
             self.assertEqual(p.source.offset, p.target.offset)
             self.assertLess(p.source.k, p.target.k)
 
-    def test_along_slope_emits_every_stride(self):
-        """Each stride in SLOPE_STRIDES contributes its own set of pairs.
+    def test_along_slope_walks_every_neighbouring_offset(self):
+        """One pair per adjacent offset, each running steep -> flat.
 
-        A one-step slope move shifts diversity several times less than a one-step k
-        move, so the wider stride exists to put the two families on a comparable
-        footing. Needs more offsets than the shared fixture has, hence its own corpora.
+        Needs the full ladder rather than the shared fixture's three offsets.
         """
         with tempfile.TemporaryDirectory() as tmp:
-            # The full ladder, so every stride has room to partition it.
             root = _write_corpora(
                 Path(tmp),
                 [("run_VERB", 3, round(-0.5 + 0.1 * i, 2)) for i in range(11)],
@@ -334,72 +335,33 @@ class PairingTestCase(unittest.TestCase):
             slope = [
                 p for p in build_simulated_pairs(root) if p.scheme == "along_slope"
             ]
-            distances = sorted(
-                {round(p.target.offset - p.source.offset, 2) for p in slope}
-            )
-            self.assertEqual(
-                distances, [round(0.1 * s, 2) for s in sorted(SLOPE_STRIDES)]
-            )
-            # Eleven offsets: ten neighbour pairs, and three 3-step pairs partitioning
-            # the ladder from its low end (-0.5 -> -0.2 -> +0.1 -> +0.4).
-            self.assertEqual(sum(1 for p in slope if _span(p) == 0.1), 10)
-            self.assertEqual(
-                sorted(
-                    (round(p.source.offset, 2), round(p.target.offset, 2))
-                    for p in slope
-                    if _span(p) == 0.3
-                ),
-                [(-0.5, -0.2), (-0.2, 0.1), (0.1, 0.4)],
-            )
-            # Orientation must hold at every stride, not just the neighbour one.
+            # Eleven offsets give ten neighbour pairs, every one a single step.
+            self.assertEqual(len(slope), 10)
+            self.assertEqual({_span(p) for p in slope}, {0.1})
             for p in slope:
                 self.assertEqual(p.source.k, p.target.k)
-                self.assertLess(p.source.offset, p.target.offset)
+                self.assertGreater(p.source.offset, p.target.offset)
 
-    def test_wide_stride_partition_is_anchored_not_positional(self):
-        """A lemma missing variants still cuts the ladder at the same offsets.
+    def test_along_slope_pairs_across_a_missing_variant(self):
+        """A lemma missing an offset pairs over the gap rather than losing the step.
 
         The simulation drops variants a lemma has too few senses or sentences for, so
-        lemmata reach the pairing stage with different subsets of the offset grid.
-        Partitioning by position in each lemma's own list would slide the cut points
-        onto whatever offsets that lemma happens to have, scattering the wide
-        comparisons across the axis instead of pinning them to shared boundaries.
+        lemmata reach pairing with different subsets of the ladder. The walk is over
+        each lemma's own sorted list, so the neighbours either side of a hole are
+        paired and the resulting step is simply wider.
         """
-        def wide_pairs(offsets, lemma):
-            """Pairs whose endpoints both sit on a partition boundary.
-
-            A gappy lemma can make two *neighbours* span 0.3 as well, so the span
-            alone does not identify a wide pair; the boundary test does.
-            """
-            root = _write_corpora(
-                Path(tempfile.mkdtemp(dir=self._tmp.name)),
-                [(lemma, 3, o) for o in offsets],
-            )
-            stride = max(SLOPE_STRIDES)
-            return sorted(
-                (round(p.source.offset, 2), round(p.target.offset, 2))
-                for p in build_simulated_pairs(root)
-                if p.scheme == "along_slope"
-                and _span(p) == round(0.1 * stride, 2)
-                and _offset_index(p.source) % stride == 0
-                and _offset_index(p.target) % stride == 0
-            )
-
-        # Variants missing *inside* a segment cost nothing: the cuts stay on the
-        # shared boundaries. A positional walk would have paired -0.5 with +0.0 here,
-        # that being this lemma's own third element.
-        self.assertEqual(
-            wide_pairs([-0.5, -0.3, -0.2, 0.0, 0.1, 0.2, 0.3, 0.4], "interior_VERB"),
-            [(-0.5, -0.2), (-0.2, 0.1), (0.1, 0.4)],
+        root = _write_corpora(
+            Path(tempfile.mkdtemp(dir=self._tmp.name)),
+            [("gappy_VERB", 3, o) for o in (0.3, 0.2, 0.0, -0.1)],
         )
-        # A missing *boundary* (-0.2) drops only the two segments that needed it,
-        # rather than sliding the remaining cuts onto other offsets.
-        self.assertEqual(
-            wide_pairs([-0.5, -0.4, -0.3, 0.0, 0.1, 0.2, 0.3, 0.4], "boundary_VERB"),
-            [(0.1, 0.4)],
+        slope = sorted(
+            (round(p.source.offset, 2), round(p.target.offset, 2))
+            for p in build_simulated_pairs(root)
+            if p.scheme == "along_slope"
         )
+        self.assertEqual(slope, [(0.0, -0.1), (0.2, 0.0), (0.3, 0.2)])
 
-    def test_along_slope_strides_emit_distinct_pairs(self):
+    def test_along_slope_pairs_are_distinct(self):
         """No pair is emitted twice, which would double-count it in the analysis."""
         slope = [
             (p.lemma_pos, p.source.csv_path.stem, p.target.csv_path.stem)

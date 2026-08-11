@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd  # type: ignore
 from scipy.stats import entropy  # type: ignore
 
-from simulation.zipfian import estimate_slopes_for_words, zipfian_probs_for_senses
+from simulation.zipfian import zipfian_probs_for_senses
 
 logger = logging.getLogger("div")
 
@@ -297,16 +297,16 @@ def simulate_zipfian_corpora(
     n_draws: int,
     seed: int,
     min_examples: int,
+    baseline_slope: float,
 ) -> None:
-    # Baseline slopes are estimated once on each verb's full sense inventory, from the
-    # raw occurrence counts -- they depend on neither k nor the offset, and are not
-    # affected by the post-dedup min_examples filter applied during sampling.
-    fits = estimate_slopes_for_words(wsd_df, target_pairs)
+    """Simulate the (k, offset) grid for every target word.
 
-    fittable = fits[fits["status"] == "ok"]
-
-    if fittable.empty:
-        raise ValueError("No target word had a fittable baseline slope.")
+    ``baseline_slope`` is one vocabulary-wide slope across all PoS, fitted by
+    ``fit_baseline_slope.py`` and passed in so an offset denotes the same applied slope
+    in every grid cell.
+    """
+    if not np.isfinite(baseline_slope):
+        raise ValueError(f"baseline_slope must be finite, got {baseline_slope!r}")
 
     offsets = _offset_grid(offset_min, offset_max, offset_step)
     config = SimConfig(
@@ -317,9 +317,9 @@ def simulate_zipfian_corpora(
         min_examples=min_examples,
     )
 
-    for _, fit in fittable.iterrows():
-        lemma, pos = fit["lemma"], fit["pos"]
+    for lemma, pos in target_pairs:
         sub_df = wsd_df[(wsd_df["lemma"] == lemma) & (wsd_df["pos"] == pos)]
-        # Baseline fit on the full sense inventory.
-        baseline = float(fit["slope"])
-        simulate_word_corpus(sub_df, baseline, config, output_dir)
+        if sub_df.empty:
+            logger.info("%s_%s: no WSD occurrences, skipping", lemma, pos)
+            continue
+        simulate_word_corpus(sub_df, baseline_slope, config, output_dir)

@@ -29,13 +29,37 @@ create-vocab vocab="most_diverse" n="100":
 
 # --- Simulation
 
+# Fit the one vocabulary-wide Zipf baseline slope, pooled over all four PoS vocabs.
+# Every simulation run must use the same value, so this runs once and writes
+# source_data/vocabs/baseline_slope.json for the recipes below to read.
+fit-baseline:
+    python fit_baseline_slope.py source_data/word_sense_disambigation_corpora \
+        source_data/vocabs/most_diverse_noun.json \
+        source_data/vocabs/most_diverse_verb.json \
+        source_data/vocabs/most_diverse_adj.json \
+        source_data/vocabs/most_diverse_adv.json
+
+# Read the fitted baseline back out, failing loudly if fit-baseline has not been run.
+_baseline:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -f source_data/vocabs/baseline_slope.json ]; then
+        echo "source_data/vocabs/baseline_slope.json missing; run 'just fit-baseline' first." >&2
+        exit 1
+    fi
+    python -c "import json;print(json.load(open('source_data/vocabs/baseline_slope.json'))['baseline_slope'])"
+
 simulate-target-verbs:
-    python simulate_data.py source_data/word_sense_disambigation_corpora source_data/vocabs/target_verbs.json source_data/simulated_data/target_verbs
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python simulate_data.py source_data/word_sense_disambigation_corpora source_data/vocabs/target_verbs.json source_data/simulated_data/target_verbs --baseline-slope "$(just _baseline)"
 
 simulate-most-diverse pos $CUDA_VISIBLE_DEVICES=gpu:
-    python simulate_data.py source_data/word_sense_disambigation_corpora source_data/vocabs/most_diverse_{{ pos }}.json source_data/simulated_data/most_diverse_{{ pos }}
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python simulate_data.py source_data/word_sense_disambigation_corpora source_data/vocabs/most_diverse_{{ pos }}.json source_data/simulated_data/most_diverse_{{ pos }} --baseline-slope "$(just _baseline)"
 
-simulate-most-diverse-all:
+simulate-most-diverse-all: fit-baseline
     #!/usr/bin/env bash
     for pos in noun verb adj adv; do
         just simulate-most-diverse "$pos"
@@ -148,14 +172,14 @@ analyse-wic-simulated-all:
         just analyse-wic-simulated "$sim_dir" "output/analysis/$name"
     done
 
-analyse-comparative scores_dir sim_dir output_dir:
+analyse-comparative-simulated scores_dir sim_dir output_dir:
     python run_analysis.py comparative {{ scores_dir }} {{ output_dir }} {{ sim_dir }}
 
-analyse-comparative-all:
+analyse-comparative-simulated-all:
     #!/usr/bin/env bash
     for sim_dir in source_data/simulated_data/*/; do
         name=$(basename "$sim_dir")
-        just analyse-comparative "output/scores/$name" "$sim_dir" "output/analysis/$name"
+        just analyse-comparative-simulated "output/scores/$name" "$sim_dir" "output/analysis/$name"
     done
 
 analyse-comparative-dwug scores_dir="output/scores/dwug_en" dwug_dir="source_data/dwug_corpora" output_dir="output/analysis/dwug_en":
@@ -163,8 +187,11 @@ analyse-comparative-dwug scores_dir="output/scores/dwug_en" dwug_dir="source_dat
 
 # Pooled all-PoS comparison. Takes the *parent* dirs and discovers the per-PoS
 # datasets under them, rather than one dataset like analyse-comparative.
-analyse-comparative-pooled scores_root="output/scores" sim_root="source_data/simulated_data" output_dir="output/analysis/pooled":
+analyse-comparative-simulated-pooled scores_root="output/scores" sim_root="source_data/simulated_data" output_dir="output/analysis/pooled":
     python run_analysis.py comparative_pooled {{ scores_root }} {{ output_dir }} {{ sim_root }}
+
+
+analyse-all: analyse-raw-simulated-all analyse-wic-simulated-all analyse-comparative-simulated-all analyse-comparative-simulated-pooled analyse-comparative-dwug
 
 # Globs on the output side (not simulated_data) so results of datasets whose sim
 # dirs have since been removed are cleaned up too. The second pattern catches the

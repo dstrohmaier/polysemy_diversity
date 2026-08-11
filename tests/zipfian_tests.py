@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from simulation.zipfian import estimate_word_slope
+from simulation.zipfian import estimate_pooled_slope, estimate_word_slope
 
 
 def _sample_finite_zipf_counts(
@@ -70,6 +70,72 @@ class ZipfianTestCase(unittest.TestCase):
         b = estimate_word_slope(counts[::-1])
         self.assertEqual(a[2], "ok")
         self.assertAlmostEqual(a[0], b[0])
+
+
+class PooledZipfianTestCase(unittest.TestCase):
+    """The vocabulary-wide fit the simulation's baseline slope comes from."""
+
+    def test_recovers_shared_slope_from_many_small_words(self):
+        # The regime that motivates pooling: many words, each with too few
+        # observations to fit on its own, all drawn from one shared slope.
+        rng = np.random.default_rng(11)
+        true_slope = 1.1
+        counts = [
+            _sample_finite_zipf_counts(true_slope, n_senses, 200, rng)
+            for n_senses in (3, 4, 5) * 40
+        ]
+
+        fit = estimate_pooled_slope(counts)
+        self.assertEqual(fit.status, "ok")
+        self.assertEqual(fit.n_words, len(counts))
+        self.assertAlmostEqual(fit.slope, true_slope, delta=0.05)
+        # Pooling is what buys the precision a single small word cannot reach.
+        self.assertLess(fit.se, 0.05)
+
+    def test_varying_sense_counts_use_their_own_normaliser(self):
+        # Words with different sense counts have different partition functions. If
+        # they were pooled under a single shared normaliser the estimate would be
+        # biased; drawing 3- and 5-sense words from one slope and recovering it
+        # confirms each word's own n is used.
+        rng = np.random.default_rng(5)
+        true_slope = 0.8
+        counts = [_sample_finite_zipf_counts(true_slope, 3, 400, rng) for _ in range(60)]
+        counts += [_sample_finite_zipf_counts(true_slope, 5, 400, rng) for _ in range(60)]
+
+        fit = estimate_pooled_slope(counts)
+        self.assertEqual(fit.status, "ok")
+        self.assertAlmostEqual(fit.slope, true_slope, delta=0.05)
+
+    def test_skips_uninformative_words(self):
+        # Words with <3 senses or no count variation carry no slope information and
+        # are dropped, mirroring estimate_word_slope's statuses.
+        rng = np.random.default_rng(3)
+        informative = [
+            _sample_finite_zipf_counts(1.2, 4, 300, rng) for _ in range(30)
+        ]
+        fit = estimate_pooled_slope(
+            informative + [np.array([7, 2]), np.array([5, 5, 5, 5])]
+        )
+        self.assertEqual(fit.status, "ok")
+        self.assertEqual(fit.n_words, len(informative))
+
+    def test_no_fittable_words_status(self):
+        fit = estimate_pooled_slope([np.array([7, 2]), np.array([4, 4, 4])])
+        self.assertEqual(fit.status, "no_fittable_words")
+        self.assertTrue(np.isnan(fit.slope))
+        self.assertEqual(fit.n_words, 0)
+
+    def test_dominated_by_high_count_words(self):
+        # High-count words contribute proportionally more to the likelihood, so the
+        # pooled estimate should sit near the well-attested word's slope rather than
+        # midway between it and a noisy low-frequency one.
+        rng = np.random.default_rng(19)
+        heavy = [_sample_finite_zipf_counts(1.5, 5, 20_000, rng)]
+        light = [_sample_finite_zipf_counts(0.5, 5, 20, rng) for _ in range(5)]
+
+        fit = estimate_pooled_slope(heavy + light)
+        self.assertEqual(fit.status, "ok")
+        self.assertGreater(fit.slope, 1.2)
 
 
 if __name__ == "__main__":

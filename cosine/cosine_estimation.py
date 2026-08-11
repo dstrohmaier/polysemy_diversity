@@ -101,6 +101,7 @@ def get_corpora_cosine_pairs(
     hf_model_name: str = "answerdotai/ModernBERT-large",
     seed: int = 0,
     build_corpus_pairs: PairBuilder = build_simulated_pairs,
+    batch_size: int | None = None,
 ) -> pd.DataFrame:
     """Compute the cosine baseline shift score for every corpus pair under ``sim_dir``.
 
@@ -110,7 +111,8 @@ def get_corpora_cosine_pairs(
     pair per lemma. Writes one combined ``cosine_pair_scores.csv`` to ``output_dir``.
     """
     cache = CorpusVectorCache(
-        WordVectorExtractor.from_config(ExtractionConfig(hf_model_name=hf_model_name))
+        WordVectorExtractor.from_config(ExtractionConfig(hf_model_name=hf_model_name)),
+        batch_size=batch_size,
     )
     pairs = build_corpus_pairs(sim_dir)
     assert pairs, (

@@ -6,7 +6,8 @@ The simulations vary along two dimensions:
   frequent real senses). Verbs with fewer than ``k`` annotated senses are skipped
   for that ``k``.
 * ``offset``   -- the Zipfian sense-frequency slope is shifted up or down relative
-  to the verb's baseline slope (estimated once from its full real sense inventory).
+  to a single vocabulary-wide baseline slope, fitted across all PoS by
+  ``fit_baseline_slope.py`` and passed in via ``--baseline-slope``.
 
 For every (k, offset) pair we generate one corpus, so the output is a grid of
 corpora spanning both dimensions.
@@ -41,9 +42,9 @@ def _load_targets(path: Path) -> list[tuple[str, str]]:
     show_default=True,
     help="Exact sense count(s) per verb. Repeat to sweep several k values.",
 )
-@click.option("--offset-min", type=float, default=-0.5, show_default=True)
-@click.option("--offset-max", type=float, default=0.5, show_default=True)
-@click.option("--offset-step", type=float, default=0.1, show_default=True)
+@click.option("--offset-min", type=float, default=-0.9, show_default=True)
+@click.option("--offset-max", type=float, default=0.9, show_default=True)
+@click.option("--offset-step", type=float, default=0.3, show_default=True)
 @click.option(
     "--n-draws",
     type=int,
@@ -59,6 +60,15 @@ def _load_targets(path: Path) -> list[tuple[str, str]]:
     help="Min distinct sentences per sense for it to be usable.",
 )
 @click.option("--seed", type=int, default=42, show_default=True)
+@click.option(
+    "--baseline-slope",
+    type=float,
+    required=True,
+    help=(
+        "Vocabulary-wide Zipf baseline slope every offset is applied to. Fit it once "
+        "over all PoS with fit_baseline_slope.py and pass the same value to every run."
+    ),
+)
 def simulate(
     wsd_dir: Path,
     targets_fp: Path,
@@ -70,6 +80,7 @@ def simulate(
     n_draws: int,
     min_examples: int,
     seed: int,
+    baseline_slope: float,
 ) -> None:
     """Generate corpora varying in sense count (k) and Zipfian slope from WSD_DIR."""
     wsd_df = load_wsd([wsd_dir])
@@ -86,6 +97,7 @@ def simulate(
         n_draws,
         seed,
         min_examples,
+        baseline_slope,
     )
 
     # Convert the freshly generated corpora to WiC-format .data files alongside

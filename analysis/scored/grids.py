@@ -30,11 +30,12 @@ Figure               Panels         Varies over
 ===================  =============  ==========================================
 score                1x3 method     the method
 ground truth         1x4 measure    the measure
-correlation          3x4 both       both -- rho is against a specific GT column
+signed error         3x4 both       both -- error is against a specific GT column
 ===================  =============  ==========================================
 
 The score and ground-truth figures share one colour scale and are meant to be read
-side by side; the correlation figure stands alone on a fixed ``[-1, 1]``.
+side by side; the signed-error figure has its own symmetric scale. All three are
+diverging and centred at 0, which is meaningful for each: no shift, and no error.
 
 Import position: this module sits after :mod:`analysis.scored.methods` and before the
 two mode modules, keeping the one-way chain ``naming -> io -> stats -> methods ->
@@ -52,7 +53,7 @@ from matplotlib.colors import Normalize  # type: ignore
 
 from analysis.io import save_fig, write_table
 from analysis.scored.methods import METHOD_ORDER, score_col
-from analysis.scored.stats import GT_SHIFT_COLS, MEASURE_LABELS, rho_or_note
+from analysis.scored.stats import GT_SHIFT_COLS, MEASURE_LABELS
 from data_processing.simulation_loading import parse_variant
 
 logger = logging.getLogger("div")
@@ -82,20 +83,11 @@ _STEP_KEYS = ["scheme", "source_k", "source_offset", "target_k", "target_offset"
 # group and pivot on a rounded value: raw float equality would fragment a grid column.
 _OFFSET_DP = 2
 
-# How far off the node line each horizontal arrow lane sits, in grid-cell units. The
-# two along_slope strides would otherwise be drawn on top of each other. Kept small so
-# that a vertical arrow trimmed clear of both lanes still has most of its length left.
-_LANE_OFFSET = 0.17
-
 # How much each arrow is pulled back from its endpoints, in grid-cell units, so it
-# reads as a move *between* two nodes rather than through them.
+# reads as a move *between* two nodes rather than through them. Both families share
+# one gap: the axes are locked square, so trimming them differently would make an
+# identical one-step move look shorter in one direction.
 _ARROW_GAP = 0.16
-
-# Vertical arrows are trimmed harder than horizontal ones. They cross the full gap
-# between two rows, and both horizontal lanes lie within it, so the pull-back has to
-# exceed _LANE_OFFSET by enough to clear a lane arrow's half-thickness -- otherwise
-# the two families intersect and draw as "T" junctions.
-_VERTICAL_GAP = 0.28
 
 
 def add_grid_coords(df: pd.DataFrame) -> pd.DataFrame:
@@ -133,37 +125,35 @@ def _grid_table(
 ) -> pd.DataFrame:
     """One row per grid group: both statistics plus the counts behind them.
 
-    Columns are ``*keys``, ``mean_score``, ``spearmanr``, ``n_lemmata``, ``n_pairs``
-    and ``note``. ``mean_score`` is the mean of ``value_col`` over the group's lemmata;
-    ``spearmanr`` is that column against ``gt_col``, delegated to
-    :func:`~analysis.scored.stats.rho_or_note` so this path and
-    :func:`~analysis.scored.stats.correlation_table` agree on which cells are
-    undefined.
+    Columns are ``*keys``, ``mean_score``, ``signed_error``, ``n_lemmata``,
+    ``n_pairs`` and ``note``. ``mean_score`` is the mean of ``value_col`` over the
+    group's lemmata; ``signed_error`` is the mean of ``value_col - gt_col``, positive
+    where the method overstates the shift.
 
-    The plain rho is used here, **not** ``spearman_with_ci``: a CI cannot be drawn in a
-    heatmap cell or on an arrow, and bootstrapping every cell would cost ~1000
-    resamples x ~400 cells per geometry for nothing. The companion tables carry
-    ``n_lemmata`` so a reader can still judge how much weight a cell bears. If CIs are
-    ever wanted here that trade-off has to be revisited, not silently reversed.
+    **Why signed error rather than a rank correlation.** The simulation applies one
+    vocabulary-wide baseline slope, so a pair's ground truth is a pure function of its
+    ``(k, offset)`` endpoints -- exactly what the grid keys pin. Every lemma in a cell
+    therefore has the *same* ground truth, and a within-cell correlation has no
+    variation to work with: it is undefined in every cell of both geometries. An error
+    against that known constant is the statistic the geometry actually supports.
+    Ranking evidence still lives in the pooled/comparative dot plots, which correlate
+    across cells rather than within one.
 
-    ``note`` distinguishes the two reasons a cell can be blank in the correlation
-    figures: a non-empty note with ``n_pairs > 0`` is a degenerate statistic, whereas
-    a grid node missing from the table entirely is absent data.
+    Both quantities are log-ratios in the same units, so their difference is directly
+    interpretable and shares the score figure's diverging scale centred at 0.
 
-    **The q=0 correlation is largely undefined on this grid**, so the richness column
-    of the rho figures is blank or nearly so. That is geometry, not a data shortage:
-    ``gt_shift_q0`` is ``log(k_T / k_S)``, a function of the two k values alone, and
-    the grid keys pin those values. A step arrow fixes both endpoints, so its q=0
-    predictor is *always* constant and the arrow rho is undefined without exception.
-    A primary cell fixes only the target k; its rho becomes defined exactly when the
-    cell pools lemmata whose anchors sit at different k, which happens in the pooled
-    mode but rarely within one PoS. The mean-score and ground-truth figures are
-    unaffected -- only the correlation ones lose that column.
+    ``note`` distinguishes an empty cell (``n=0``) from a grid node missing from the
+    table entirely, which is absent data.
+
+    **The q=0 (richness) column is a special case**: ``gt_shift_q0`` is
+    ``log(k_T / k_S)``, which is exactly 0 wherever a group fixes both k values -- every
+    ``along_slope`` arrow, and every primary cell. There the signed error collapses to
+    ``mean_score`` itself. The column stays readable but is measuring raw magnitude
+    against a zero target, not error against a varying one.
 
     ``gt_col=None`` means "means only": the ground-truth figure plots a ``gt_shift_*``
-    column as its own ``mean_score``, and correlating that column with itself would be
-    a trivial 1.0 everywhere. Those rows carry a NaN ``spearmanr`` rather than a
-    meaningless one.
+    column as its own ``mean_score``, and differencing that column against itself would
+    be a trivial 0 everywhere. Those rows carry a NaN ``signed_error`` instead.
     """
     rows = []
     cols = [value_col] if gt_col is None else [value_col, gt_col]
@@ -172,16 +162,19 @@ def _grid_table(
         pair = sub[cols].dropna()
         xs = pair[value_col].to_numpy(dtype=float)
         if gt_col is None:
-            rho, note = float("nan"), ""
+            err, note = float("nan"), ""
+        elif len(xs) == 0:
+            err, note = float("nan"), "n=0"
         else:
-            rho, _, _, _, note = rho_or_note(
-                xs, pair[gt_col].to_numpy(dtype=float), with_ci=False
-            )
+            # Differenced per lemma, then averaged. Equivalent to mean(score) - GT
+            # while the cell's GT is constant, but stays correct if it ever is not.
+            errs = xs - pair[gt_col].to_numpy(dtype=float)
+            err, note = float(np.mean(errs)), ""
         rows.append(
             {
                 **dict(zip(keys, keyvals)),
                 "mean_score": float(np.mean(xs)) if len(xs) else float("nan"),
-                "spearmanr": rho,
+                "signed_error": err,
                 "n_lemmata": sub["lemma_pos"].nunique(),
                 "n_pairs": len(pair),
                 "note": note,
@@ -288,14 +281,8 @@ def draw_step_arrows(
     because they live on the same grid, and their orientation alone identifies which
     scheme an arrow belongs to.
 
-    ``along_slope`` is emitted at two strides (see
-    :data:`~simulation.pairing.SLOPE_STRIDES`): neighbour moves and wider ones that
-    reach the same magnitude as a single k step. The two strides would overlap on the
-    node line, so they are drawn on separate lanes -- one-step above the row, longer
-    strides below -- with the node markers on the line between them. Vertical arrows
-    stay on the line, since the k axis has a single stride. The wider strides are
-    emitted end to end rather than sliding, so they partition their row instead of
-    stacking on top of each other.
+    Both families are one-step moves between neighbouring nodes, so every arrow sits
+    on the node line and no lane separation is needed.
 
     Arrows are pulled back from their endpoints in *data* units, so the gap is the
     same fraction of a cell whatever the span. Trimming by a fixed number of points
@@ -309,8 +296,8 @@ def draw_step_arrows(
     arrows are absent -- and absent they will be, ``along_k`` being the thin scheme
     throughout.
 
-    See :func:`_grid_table` for why the correlation figure's q=0 panel has no arrows
-    at all.
+    See :func:`_grid_table` for why the signed-error figure's q=0 panel reduces to the
+    raw score.
     """
     xs, ys = np.meshgrid(range(len(offset_order)), range(len(k_order)))
     ax.scatter(xs, ys, s=5, color="0.75", zorder=1)
@@ -322,29 +309,16 @@ def draw_step_arrows(
         y0 = k_order.index(row["source_k"])
         x1 = offset_order.index(row["target_offset"])
         y1 = k_order.index(row["target_k"])
-        span = max(abs(x1 - x0), abs(y1 - y0))
+        # Trim in data units rather than points (shrinkA/shrinkB): a fixed number of
+        # points removes a far larger fraction of a short arrow than of a long one.
         if y0 == y1:
-            # Horizontal arrows share their row with the vertical ones, so they sit
-            # off the node line: neighbours above it, multi-step below. Trim in data
-            # units rather than points (shrinkA/shrinkB): a fixed number of points
-            # removes a far larger fraction of a one-cell arrow than of a three-cell
-            # one, which is what made single steps look stubby beside the verticals.
-            lane = _LANE_OFFSET if span <= 1 else -_LANE_OFFSET
-            y0 += lane
-            y1 += lane
             direction = 1 if x1 > x0 else -1
             x0 += direction * _ARROW_GAP
             x1 -= direction * _ARROW_GAP
         else:
-            # A vertical arrow spans the whole interval between two rows, and both
-            # horizontal lanes lie inside it: the multi-step lane sits just above the
-            # source row and the neighbour lane just below the target. Pulling the
-            # ends back past both is what keeps the families from crossing -- moving
-            # the horizontals alone cannot, since there is nowhere between the rows a
-            # full-length vertical does not reach.
             direction = 1 if y1 > y0 else -1
-            y0 += direction * _VERTICAL_GAP
-            y1 -= direction * _VERTICAL_GAP
+            y0 += direction * _ARROW_GAP
+            y1 -= direction * _ARROW_GAP
         ax.annotate(
             "",
             xy=(x1, y1),
@@ -443,12 +417,17 @@ def _panel_figure(
     # distinguishable (columns are titled, rows are not). Single-row figures are
     # already fully identified by their panel titles, and labelling that one row would
     # collide with the figure-level "Sense count k" ylabel.
-    if row_labels and nrows > 1:
+    # A figure-level supylabel is centred on the figure and would print straight
+    # through the middle row's own ylabel, so when rows are labelled the k axis is
+    # named on each row label instead of once for the figure.
+    labelled_rows = bool(row_labels) and nrows > 1
+    if labelled_rows:
         for r, label in enumerate(row_labels):
-            axes[r, 0].set_ylabel(label, fontsize="small")
+            axes[r, 0].set_ylabel(f"{label}\nSense count k", fontsize="small")
 
     fig.supxlabel("Zipfian slope offset", fontsize="small")
-    fig.supylabel("Sense count k", fontsize="small")
+    if not labelled_rows:
+        fig.supylabel("Sense count k", fontsize="small")
     # tight_layout before the figure-level colourbar: the reverse order lets the
     # layout pass reclaim the space the colourbar was given (same constraint the
     # pooled module documents for its figure-level legend).
@@ -538,20 +517,28 @@ def _geometry_figures(
         f"{stem}_gt",
     )
 
-    # Correlation: 3x4, method x measure, on the fixed [-1, 1] rho scale.
-    rho_panels = [
+    # Signed error: 3x4, method x measure. Its own symmetric scale rather than the
+    # score figure's -- an error can exceed the scores it is built from, and pinning it
+    # to a shared scale would flatten the differences this figure exists to show.
+    error_panels = [
         (MEASURE_LABELS[measure], cells[(method, measure)])
         for method in methods
         for measure in GT_SHIFT_COLS
     ]
+    error_limit = symmetric_limits(
+        pd.concat([df for _, df in error_panels if not df.empty])["signed_error"]
+        if any(not df.empty for _, df in error_panels)
+        else []
+    )
     save_fig(
         _panel_figure(
-            rho_panels, draw_fn, "spearmanr", k_order, offset_order,
-            Normalize(vmin=-1, vmax=1), len(methods), len(GT_SHIFT_COLS),
-            "SRC (Spearman's rank correlation)", row_labels=methods,
+            error_panels, draw_fn, "signed_error", k_order, offset_order,
+            Normalize(vmin=-error_limit, vmax=error_limit),
+            len(methods), len(GT_SHIFT_COLS),
+            "Mean signed error (score - GT)", row_labels=methods,
         ),
         figures_dir,
-        stem.replace("shift_", "rho_"),
+        stem.replace("shift_", "error_"),
     )
 
     parts = []

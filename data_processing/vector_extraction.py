@@ -9,8 +9,12 @@ from transformers import AutoModel, AutoTokenizer
 logger = logging.getLogger("div")
 
 # Sentences average ~35 tokens (max ~104 observed), and a corpus is at most a couple
-# of hundred rows, so a whole corpus is 1-7 forward passes at this size.
-DEFAULT_BATCH_SIZE = 32
+# of hundred rows, so at this size most corpora embed in a single forward pass. That
+# is the point: these are small, short-sequence batches, so throughput is limited by
+# per-launch overhead rather than by arithmetic, and one big pass beats several small
+# ones. Raising it trades GPU memory for speed and is safe well past this default;
+# it is a ceiling, not a fixed shape, since the last batch of a corpus is short.
+DEFAULT_BATCH_SIZE = 256
 
 
 @dataclass(frozen=True)
@@ -129,45 +133,64 @@ class WordVectorExtractor:
         attention_mask = encoding["attention_mask"].tolist()  # (B, L)
         model_inputs = {k: v.to(self.device) for k, v in encoding.items()}
 
+        # Only ask for the full hidden-state stack when more than the final layer is
+        # wanted. With output_hidden_states=True the model keeps all N+1 layer tensors
+        # alive at (B, L, H) each -- 25 of them for ModernBERT-large -- which at a
+        # large batch size is most of the memory the pass uses, for tensors the default
+        # target_layers=(-1,) then throws away.
+        want_last_only = tuple(target_layers) == (-1,)
         with torch.no_grad():
-            outputs = self.model(**model_inputs, output_hidden_states=True)
+            outputs = self.model(
+                **model_inputs, output_hidden_states=not want_last_only
+            )
 
-        # outputs.hidden_states is a tuple (embeddings, layer_1, ..., layer_N), each
-        # (B, L, H). Average the requested layers (default: just the last), keeping
-        # the batch axis -- indexing a single row here is what limited this to one
-        # sentence per forward pass.
-        hidden_states = torch.mean(
-            torch.stack(
-                [outputs.hidden_states[layer] for layer in target_layers],
+        if want_last_only:
+            hidden_states = outputs.last_hidden_state  # (B, L, H)
+        else:
+            # outputs.hidden_states is a tuple (embeddings, layer_1, ..., layer_N),
+            # each (B, L, H). Average the requested layers, keeping the batch axis --
+            # indexing a single row here is what limited this to one sentence per
+            # forward pass.
+            hidden_states = torch.mean(
+                torch.stack(
+                    [outputs.hidden_states[layer] for layer in target_layers],
+                    dim=0,
+                ),
                 dim=0,
-            ),
-            dim=0,
-        )  # (B, L, H)
+            )  # (B, L, H)
 
-        results: list[np.ndarray | None] = []
+        # Build the (B, L) selection mask on the host -- it is pure integer-span logic
+        # over the tokeniser's offsets -- then pool, normalise and transfer *once* for
+        # the whole batch. Doing the mean per row instead forces a separate GPU->CPU
+        # sync per sentence, which at these batch sizes costs more than the forward
+        # pass it follows.
+        select = torch.zeros(hidden_states.shape[:2], dtype=torch.bool)
         for row, (offset_start, offset_end) in enumerate(spans):
-            word_token_indices = [
-                i
-                for i, (token_start, token_end) in enumerate(offsets[row])
+            for i, (token_start, token_end) in enumerate(offsets[row]):
                 # A padded position carries offsets (0, 0) and so is already excluded
                 # by the token_end > token_start guard; the mask makes that explicit,
                 # since pooling a pad would silently corrupt the shorter rows of a
                 # mixed-length batch.
-                if attention_mask[row][i]
-                and token_end > token_start  # skip special tokens (span (0, 0))
-                and not (token_end <= offset_start or token_start >= offset_end)
-            ]
-            if not word_token_indices:
-                results.append(None)
-                continue
+                if (
+                    attention_mask[row][i]
+                    and token_end > token_start  # skip special tokens (span (0, 0))
+                    and not (token_end <= offset_start or token_start >= offset_end)
+                ):
+                    select[row, i] = True
 
-            word_vector = (
-                hidden_states[row][word_token_indices].mean(dim=0).detach().cpu().numpy()
-            )
-            norm = np.linalg.norm(word_vector)
-            if norm > 0:
-                word_vector = word_vector / norm
-            results.append(word_vector)
+        counts = select.sum(dim=1)  # (B,) subwords pooled per row
+        select_dev = select.to(hidden_states.device).unsqueeze(-1)  # (B, L, 1)
+        summed = (hidden_states * select_dev).sum(dim=1)  # (B, H)
+        # Guard the empty rows against 0/0; they are replaced by None below anyway.
+        safe_counts = counts.clamp(min=1).to(hidden_states.device).unsqueeze(-1)
+        pooled = summed / safe_counts
+        pooled = torch.nn.functional.normalize(pooled, dim=1, eps=0.0)
+        pooled_np = pooled.detach().float().cpu().numpy()
+
+        results: list[np.ndarray | None] = [
+            None if counts[row] == 0 else pooled_np[row]
+            for row in range(len(spans))
+        ]
 
         assert len(results) == len(texts), "batch must return one entry per input"
         return results

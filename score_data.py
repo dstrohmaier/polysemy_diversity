@@ -79,6 +79,13 @@ _PAIR_ENUMERATORS = {"simulated": build_simulated_pairs, "dwug": build_dwug_pair
     "state). The default matches the scorers' own default, so it reproduces runs "
     "made before this option existed.",
 )
+@click.option(
+    "--batch-size",
+    type=int,
+    default=None,
+    help="Sentences (vmf/cosine) or sentence pairs (wic) per forward pass. Raise it "
+    "to trade GPU memory for throughput; leave unset for each method's default.",
+)
 def score(
     scoring: str,
     sim_dir: Path,
@@ -88,6 +95,7 @@ def score(
     base_model: str,
     dataset: str,
     seed: int,
+    batch_size: int | None,
 ) -> None:
     """Score every corpus pair under SIM_DIR using SCORING (vmf, wic, or cosine)."""
 
@@ -105,6 +113,7 @@ def score(
                 hf_model_name=hf_model_name,
                 seed=seed,
                 build_corpus_pairs=build_corpus_pairs,
+                batch_size=batch_size,
             )
         case "cosine":
             get_corpora_cosine_pairs(
@@ -113,10 +122,12 @@ def score(
                 hf_model_name=hf_model_name,
                 seed=seed,
                 build_corpus_pairs=build_corpus_pairs,
+                batch_size=batch_size,
             )
         case "wic":
             if not torch.cuda.is_available():
                 raise SystemExit("No CUDA-capable GPU found. Aborting.")
+            wic_kwargs = {} if batch_size is None else {"batch_size": batch_size}
             get_corpora_wic_pairs(
                 sim_dir,
                 output_dir / "wic",
@@ -124,6 +135,7 @@ def score(
                 base_model=base_model,
                 seed=seed,
                 build_corpus_pairs=build_corpus_pairs,
+                **wic_kwargs,
             )
 
 

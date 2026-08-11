@@ -41,6 +41,8 @@ COL_NAMES = {
     "spearman_r": "SRC",
     "rho": "SRC",
     "rho_err_vs_n": "SRC (error vs n)",
+    "signed_error": "Signed error",
+    "mean_score": "Mean score",
     "accuracy": "Acc.",
     "coverage": "Cov.",
     "ci_low": "CI low",

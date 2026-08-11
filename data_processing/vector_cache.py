@@ -41,10 +41,12 @@ class CorpusVectorCache:
         self,
         extractor: WordVectorExtractor,
         capacity: int = DEFAULT_CAPACITY,
+        batch_size: int | None = None,
     ):
         assert capacity > 0, "capacity must be positive; use the extractor directly"
         self.extractor = extractor
         self.capacity = capacity
+        self.batch_size = batch_size
         self._entries: OrderedDict[Path, np.ndarray] = OrderedDict()
         self.hits = 0
         self.misses = 0
@@ -64,7 +66,8 @@ class CorpusVectorCache:
 
         self.misses += 1
         contexts = pd.read_csv(key).to_dict("records")
-        vectors = self.extractor.get_word_vectors_from_spans(contexts)
+        extra = {} if self.batch_size is None else {"batch_size": self.batch_size}
+        vectors = self.extractor.get_word_vectors_from_spans(contexts, **extra)
 
         self._entries[key] = vectors
         if len(self._entries) > self.capacity:
