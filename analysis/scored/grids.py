@@ -83,15 +83,19 @@ _STEP_KEYS = ["scheme", "source_k", "source_offset", "target_k", "target_offset"
 _OFFSET_DP = 2
 
 # How far off the node line each horizontal arrow lane sits, in grid-cell units. The
-# two along_slope strides would otherwise be drawn on top of each other.
-_LANE_OFFSET = 0.26
+# two along_slope strides would otherwise be drawn on top of each other. Kept small so
+# that a vertical arrow trimmed clear of both lanes still has most of its length left.
+_LANE_OFFSET = 0.17
 
 # How much each arrow is pulled back from its endpoints, in grid-cell units, so it
-# reads as a move *between* two nodes rather than through them. Multi-step arrows are
-# trimmed harder: they pass the column where the vertical arrows sit, and the wider
-# gap keeps the two families from touching.
+# reads as a move *between* two nodes rather than through them.
 _ARROW_GAP = 0.16
-_WIDE_ARROW_GAP = 0.30
+
+# Vertical arrows are trimmed harder than horizontal ones. They cross the full gap
+# between two rows, and both horizontal lanes lie within it, so the pull-back has to
+# exceed _LANE_OFFSET by enough to clear a lane arrow's half-thickness -- otherwise
+# the two families intersect and draw as "T" junctions.
+_VERTICAL_GAP = 0.28
 
 
 def add_grid_coords(df: pd.DataFrame) -> pd.DataFrame:
@@ -321,26 +325,26 @@ def draw_step_arrows(
         span = max(abs(x1 - x0), abs(y1 - y0))
         if y0 == y1:
             # Horizontal arrows share their row with the vertical ones, so they sit
-            # off the node line: neighbours above it, multi-step below. The wider
-            # arrows also start and end a little inside their endpoints, clearing the
-            # column each vertical arrow occupies.
+            # off the node line: neighbours above it, multi-step below. Trim in data
+            # units rather than points (shrinkA/shrinkB): a fixed number of points
+            # removes a far larger fraction of a one-cell arrow than of a three-cell
+            # one, which is what made single steps look stubby beside the verticals.
             lane = _LANE_OFFSET if span <= 1 else -_LANE_OFFSET
             y0 += lane
             y1 += lane
-        # Trim in data units rather than points (shrinkA/shrinkB): a fixed number of
-        # points removes a far larger fraction of a one-cell arrow than of a
-        # three-cell one, which is what made the single-step arrows look stubby
-        # beside the vertical ones. A proportional gap keeps every arrow reading as
-        # the number of steps it actually spans.
-        gap = _ARROW_GAP if span <= 1 else _WIDE_ARROW_GAP
-        if x1 != x0:
             direction = 1 if x1 > x0 else -1
-            x0 += direction * gap
-            x1 -= direction * gap
-        if y1 != y0:
+            x0 += direction * _ARROW_GAP
+            x1 -= direction * _ARROW_GAP
+        else:
+            # A vertical arrow spans the whole interval between two rows, and both
+            # horizontal lanes lie inside it: the multi-step lane sits just above the
+            # source row and the neighbour lane just below the target. Pulling the
+            # ends back past both is what keeps the families from crossing -- moving
+            # the horizontals alone cannot, since there is nowhere between the rows a
+            # full-length vertical does not reach.
             direction = 1 if y1 > y0 else -1
-            y0 += direction * gap
-            y1 -= direction * gap
+            y0 += direction * _VERTICAL_GAP
+            y1 -= direction * _VERTICAL_GAP
         ax.annotate(
             "",
             xy=(x1, y1),
